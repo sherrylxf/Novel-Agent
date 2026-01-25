@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: novel-agent
+  profiles:
+    active: dev
+  
+  # MySQL数据源配置（业务数据）- 必需
+  datasource:
+    mysql:
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://127.0.0.1:3306/novel_agent?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=false
+      username: root
+      password: 123456
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 5
+        idle-timeout: 30000
+        connection-timeout: 30000
+        max-lifetime: 1800000
+    
+    # PostgreSQL数据源配置（向量数据库）
+    pgvector:
+      driver-class-name: org.postgresql.Driver
+      url: jdbc:postgresql://127.0.0.1:15432/novel_vector
+      username: postgres
+      password: postgres
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 2
+        idle-timeout: 30000
+        connection-timeout: 30000
+  
+  # Neo4j配置（知识图谱）- 可选，如果暂时不使用知识图谱功能可以注释
+  # neo4j:
+  #   uri: bolt://localhost:7687
+  #   authentication:
+  #     username: neo4j
+  #     password: password
+  
+  # AI配置（LLM API）- 可选，如果暂时不使用LLM功能可以注释
+  # ai:
+  #   openai:
+  #     api-key: ${OPENAI_API_KEY:your-api-key}
+  #     base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+  
+  # MyBatis配置
+  mybatis:
+    mapper-locations: classpath:/mybatis/mapper/**/*.xml
+    config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+# 日志配置
+logging:
+  level:
+    cn.bugstack.novel: DEBUG
+    org.springframework.ai: INFO
+    root: INFO

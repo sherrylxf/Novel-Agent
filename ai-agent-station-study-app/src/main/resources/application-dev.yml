@@ -1,0 +1,91 @@
+server:
+  port: 8091
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+# 数据库配置（多数据源）
+spring:
+  application:
+    name: novel-agent
+  
+  # MySQL数据源配置（业务数据）
+  datasource:
+    mysql:
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://127.0.0.1:13306/novel_agent?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=false
+      username: root
+      password: 123456
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 5
+        idle-timeout: 30000
+        connection-timeout: 30000
+        max-lifetime: 1800000
+    
+    # PostgreSQL数据源配置（向量数据库，可选）
+    pgvector:
+      driver-class-name: org.postgresql.Driver
+      url: jdbc:postgresql://127.0.0.1:15432/novel_vector
+      username: postgres
+      password: postgres
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 2
+        idle-timeout: 30000
+        connection-timeout: 30000
+  
+  # Neo4j配置（知识图谱，可选）
+  neo4j:
+    uri: bolt://localhost:17687
+    authentication:
+      username: neo4j
+      password: password
+  
+  # AI配置（LLM API，使用 DeepSeek）
+  # 注意：虽然配置键名为 openai，但可以使用任何兼容 OpenAI API 格式的提供商
+  ai:
+    openai:
+      # DeepSeek API 配置
+      api-key: ${OPENAI_API_KEY:sk-9889e7ff20d74eda8081daf6347602f9}
+      base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
+      # 模型选择：deepseek-chat（非思考模式，推荐用于小说生成）
+      # - deepseek-chat: 默认4K输出，最大8K，支持FIM补全，适合章节生成（推荐）
+      # - deepseek-reasoner: 默认32K输出，最大64K，适合长文本生成，但价格更高
+      chat:
+        options:
+          model: deepseek-chat  # 使用 deepseek-chat 模型（非思考模式）
+      
+      # 其他提供商配置（已注释）
+      # 方式二：使用 Qwen（通义千问）
+      # api-key: ${OPENAI_API_KEY:your-api-key}
+      # base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      
+      # 方式三：使用其他兼容 OpenAI API 的提供商
+      # api-key: ${OPENAI_API_KEY:your-api-key}
+      # base-url: ${OPENAI_BASE_URL:https://your-provider.com/v1}
+      
+      # 方式四：使用本地模型（如 Ollama）
+      # api-key: ${OPENAI_API_KEY:ollama}  # Ollama 不需要真实的 key
+      # base-url: ${OPENAI_BASE_URL:http://localhost:11434/v1}
+  
+  # MyBatis配置
+  mybatis:
+    mapper-locations: classpath:/mybatis/mapper/**/*.xml
+    config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 日志
+logging:
+  level:
+    cn.bugstack.novel: DEBUG
+    org.springframework.ai: INFO
+    root: INFO
+  config: classpath:logback-spring.xml

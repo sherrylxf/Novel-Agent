@@ -22,3 +22,110 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# ============================================
+# 敏感信息保护 - 防止泄漏
+# ============================================
+
+# 环境变量和密钥文件
+.env
+.env.*
+!.env.example
+*.env
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+*.truststore
+*.crt
+*.cert
+*.cer
+*.pfx
+
+# 配置文件（包含敏感信息）
+**/application-local.yml
+**/application-secret.yml
+**/application-private.yml
+**/application-*.local.yml
+**/application-*.secret.yml
+
+# IDE 配置文件（可能包含敏感信息）
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Maven 构建输出
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# 临时文件和备份文件
+*.tmp
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# 日志文件
+logs/
+*.log
+*.log.*
+
+# 敏感文档
+*secret*
+*password*
+*credential*
+*private*
+*confidential*
+
+# 证书和密钥
+*.pem
+*.key
+*.crt
+*.cert
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+
+# API 密钥和令牌
+*api-key*
+*token*
+*secret-key*
+*access-key*
+*private-key*
