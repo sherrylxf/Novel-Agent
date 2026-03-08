@@ -12,8 +12,6 @@ import java.util.stream.Collectors;
 
 /**
  * 小说仓储实现
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @Repository

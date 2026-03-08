@@ -6,8 +6,6 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 
 /**
  * Novel Agent 服务接口
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 public interface INovelAgentService {
     

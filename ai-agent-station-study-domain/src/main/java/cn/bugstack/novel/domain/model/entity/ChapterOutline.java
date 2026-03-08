@@ -10,8 +10,6 @@ import java.util.List;
 /**
  * 章节梗概
  * 章节的梗概和场景规划
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder

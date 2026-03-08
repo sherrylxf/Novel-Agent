@@ -11,8 +11,6 @@ import java.util.Map;
 /**
  * 小说上下文
  * 在Agent之间传递的共享上下文对象
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder

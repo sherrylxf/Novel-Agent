@@ -7,8 +7,6 @@ import lombok.NoArgsConstructor;
 
 /**
  * 小说Seed值对象
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder

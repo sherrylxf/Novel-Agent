@@ -7,8 +7,6 @@ import java.util.List;
 /**
  * 小说仓储接口
  * 领域层定义的仓储接口，由基础设施层实现
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 public interface INovelRepository {
     

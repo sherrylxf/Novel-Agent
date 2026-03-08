@@ -10,6 +10,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import javax.sql.DataSource;
 import java.util.Objects;
@@ -19,10 +22,9 @@ import java.util.Objects;
  * - MySQL：业务数据
  * - PostgreSQL：向量数据库（RAG）
  * - Neo4j：知识图谱（通过Spring Data Neo4j自动配置）
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Configuration
+@EnableTransactionManagement
 public class DataSourceConfig {
 
     // ==================== MySQL 数据源（业务数据）====================
@@ -72,8 +74,21 @@ public class DataSourceConfig {
     }
 
     @Bean("sqlSessionTemplate")
-    public SqlSessionTemplate sqlSessionTemplate(@Qualifier("sqlSessionFactory") SqlSessionFactoryBean sqlSessionFactory) throws Exception {
+    public SqlSessionTemplate sqlSessionTemplate(
+            @Qualifier("sqlSessionFactory") SqlSessionFactoryBean sqlSessionFactory,
+            @Qualifier("transactionManager") PlatformTransactionManager transactionManager) throws Exception {
+        // SqlSessionTemplate会自动使用Spring的事务管理器
+        // 当方法有@Transactional注解时，会使用事务；否则每个操作都会自动提交
         return new SqlSessionTemplate(Objects.requireNonNull(sqlSessionFactory.getObject()));
+    }
+    
+    /**
+     * 配置事务管理器（MySQL数据源）
+     */
+    @Bean("transactionManager")
+    @Primary
+    public PlatformTransactionManager transactionManager(@Qualifier("mysqlDataSource") DataSource mysqlDataSource) {
+        return new DataSourceTransactionManager(mysqlDataSource);
     }
 
     // ==================== PostgreSQL 数据源（向量数据库）====================

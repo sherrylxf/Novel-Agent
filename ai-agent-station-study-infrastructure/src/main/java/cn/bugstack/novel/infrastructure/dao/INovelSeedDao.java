@@ -7,8 +7,6 @@ import java.util.List;
 
 /**
  * 小说种子表 DAO
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Mapper
 public interface INovelSeedDao {

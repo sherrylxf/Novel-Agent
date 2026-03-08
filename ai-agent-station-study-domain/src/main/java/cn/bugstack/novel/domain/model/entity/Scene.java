@@ -4,17 +4,17 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 /**
  * 场景
  * 小说的具体场景内容
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@ToString(exclude = "content")  // 避免日志/调试时输出整段正文
 public class Scene {
     
     /**

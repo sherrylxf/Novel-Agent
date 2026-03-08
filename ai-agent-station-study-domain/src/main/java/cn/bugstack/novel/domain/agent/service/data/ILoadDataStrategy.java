@@ -5,8 +5,6 @@ import cn.bugstack.novel.domain.model.entity.NovelContext;
 /**
  * 数据加载策略接口
  * 参考课程第3-6节：数据加载模型设计
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 public interface ILoadDataStrategy {
     

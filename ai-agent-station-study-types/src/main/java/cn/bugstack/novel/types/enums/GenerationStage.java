@@ -5,8 +5,6 @@ import lombok.Getter;
 
 /**
  * 生成阶段枚举
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Getter
 @AllArgsConstructor

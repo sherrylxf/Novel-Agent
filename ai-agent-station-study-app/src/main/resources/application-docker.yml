@@ -38,6 +38,7 @@ spring:
   # AI配置（LLM API - 调用外部API，不使用本地模型）
   ai:
     openai:
+      # ========== Chat API 配置（用于文本生成）==========
       api-key: ${SPRING_AI_OPENAI_API_KEY:your-api-key}
       base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.openai.com}
       # 支持的API提供商：
@@ -45,6 +46,17 @@ spring:
       # - DeepSeek: https://api.deepseek.com
       # - Qwen: https://dashscope.aliyuncs.com/compatible-mode/v1
       # - 其他兼容OpenAI API的提供商
+      
+      # ========== Embeddings API 配置（用于RAG向量检索）==========
+      # 使用本地Ollama服务（推荐，免费且无需API密钥）
+      embedding:
+        options:
+          model: ${OPENAI_EMBEDDING_MODEL:nomic-embed-text}  # Ollama的embedding模型
+      
+      # Ollama Embeddings配置（通过环境变量配置，优先级最高）
+      # 如果环境变量未设置，使用配置文件中的默认值
+      embedding-api-key: ${EMBEDDING_API_KEY:ollama}  # Ollama不需要真实的key
+      embedding-base-url: ${EMBEDDING_BASE_URL:http://ollama:11434/v1}  # 使用docker服务名
   
   # MyBatis配置
   mybatis:

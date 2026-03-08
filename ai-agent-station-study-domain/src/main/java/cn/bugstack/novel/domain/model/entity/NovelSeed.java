@@ -12,8 +12,6 @@ import java.util.List;
 /**
  * 小说种子
  * 小说的初始设定和核心概念
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder

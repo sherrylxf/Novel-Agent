@@ -10,8 +10,6 @@ import java.util.List;
 /**
  * 小说规划
  * 小说的整体结构规划
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder

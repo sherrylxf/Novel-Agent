@@ -9,8 +9,6 @@ import java.util.Map;
 
 /**
  * 人物值对象
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder
@@ -22,6 +20,11 @@ public class Character {
      * 人物ID
      */
     private String characterId;
+
+    /**
+     * 所属小说ID（用于按小说筛选图谱，可选）
+     */
+    private String novelId;
     
     /**
      * 人物名称

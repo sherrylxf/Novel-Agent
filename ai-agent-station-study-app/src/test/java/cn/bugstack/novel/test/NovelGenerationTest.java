@@ -5,23 +5,21 @@ import cn.bugstack.novel.domain.model.entity.NovelPlan;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.junit4.SpringRunner;
 
-import javax.annotation.Resource;
 
 /**
  * 小说生成完整流程测试
  * 演示从Seed → 章节生成的完整流程
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @RunWith(SpringRunner.class)
 @SpringBootTest
 public class NovelGenerationTest {
     
-    @Resource
+    @Autowired
     private NovelAgentOrchestrator orchestrator;
     
     /**

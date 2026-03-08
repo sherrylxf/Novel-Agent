@@ -10,8 +10,6 @@ import java.io.Serializable;
 
 /**
  * 小说生成请求DTO
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder
@@ -51,5 +49,10 @@ public class NovelGenerateRequestDTO implements Serializable {
      * 最大执行步数
      */
     private Integer maxStep;
+    
+    /**
+     * 目标总字数（可选，不填则使用默认100万字）
+     */
+    private Integer targetWordCount;
     
 }

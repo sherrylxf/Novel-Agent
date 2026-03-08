@@ -64,4 +64,9 @@ logging:
   level:
     cn.bugstack.novel: DEBUG
     org.springframework.ai: INFO
+    org.mybatis: DEBUG
+    org.apache.ibatis: DEBUG
+    java.sql: DEBUG
+    java.sql.Statement: DEBUG
+    java.sql.PreparedStatement: DEBUG
     root: INFO

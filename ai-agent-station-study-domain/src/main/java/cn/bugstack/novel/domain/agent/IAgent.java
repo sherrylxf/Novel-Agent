@@ -5,8 +5,6 @@ import cn.bugstack.novel.domain.model.entity.NovelContext;
 /**
  * Agent接口
  * 所有Agent必须实现此接口
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 public interface IAgent<T, R> {
     

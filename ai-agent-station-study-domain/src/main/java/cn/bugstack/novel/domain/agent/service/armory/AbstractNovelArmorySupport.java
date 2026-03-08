@@ -13,8 +13,6 @@ import org.springframework.context.ApplicationContext;
  * Novel Agent装配支撑类
  * 参考课程第3-7、8节：动态实例化机制
  * 提供动态Bean注册功能
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 public abstract class AbstractNovelArmorySupport {

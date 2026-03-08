@@ -14,8 +14,6 @@ import java.util.Map;
  * 根执行节点
  * 负责数据加载
  * 参考课程第3-10、11节：执行链路设计
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @Component
@@ -40,7 +38,7 @@ public class RootExecuteNode extends AbstractExecuteSupport {
             }
         }
         
-        context.setCurrentStage(GenerationStage.SEED.getName());
+        context.setCurrentStage(GenerationStage.SEED.name()); // 使用枚举名称
         return seedExecuteNode;
     }
     

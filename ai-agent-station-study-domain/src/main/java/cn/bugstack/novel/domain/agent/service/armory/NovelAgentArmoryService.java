@@ -16,8 +16,6 @@ import java.util.Map;
  * Novel Agent装配服务
  * 参考课程第3-7、8、9节：动态实例化机制
  * 负责动态注册和管理Agent实例
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @Service

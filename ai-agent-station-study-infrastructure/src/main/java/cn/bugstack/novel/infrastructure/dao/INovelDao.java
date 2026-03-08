@@ -7,8 +7,6 @@ import java.util.List;
 
 /**
  * 小说表 DAO
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Mapper
 public interface INovelDao {

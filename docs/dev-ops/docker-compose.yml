@@ -113,6 +113,36 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ==================== AI服务 ====================
+  
+  # Ollama（本地Embedding模型服务）
+  # 使用阿里云镜像（国内访问更快）
+  ollama:
+    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/ollama:0.5.10
+    container_name: novel-dev-ollama
+    restart: always
+    ports:
+      - "11434:11434"  # Ollama API端口
+    volumes:
+      - ollama_data:/root/.ollama  # 持久化模型数据
+    environment:
+      - TZ=Asia/Shanghai
+    # 注意：首次启动需要手动拉取模型，执行：
+    # docker exec -it novel-dev-ollama ollama pull nomic-embed-text
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - novel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ==================== 应用服务 ====================
   
   # Novel Agent应用
@@ -140,6 +170,9 @@ services:
       # LLM API配置（通过环境变量传入，避免泄露）
       - SPRING_AI_OPENAI_API_KEY=${OPENAI_API_KEY}
       - SPRING_AI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com}
+      # Embedding API配置（使用本地Ollama）
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-ollama}
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-http://ollama:11434/v1}
     volumes:
       - ./logs:/app/logs
     depends_on:
@@ -148,6 +181,8 @@ services:
       postgresql:
         condition: service_healthy
       neo4j:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     networks:
       - novel-network
@@ -183,28 +218,12 @@ services:
     networks:
       - novel-network
 
-  # pgAdmin（PostgreSQL管理工具）
-  pgadmin:
-    image: dpage/pgadmin4:9.1.0
-    hostname: pgadmin
-    container_name: novel-dev-pgadmin
-    restart: always
-    ports:
-      - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@novel.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    depends_on:
-      postgresql:
-        condition: service_healthy
-    networks:
-      - novel-network
-
 volumes:
   mysql_data:
   postgresql_data:
   neo4j_data:
   neo4j_logs:
+  ollama_data:  # Ollama模型数据持久化
 
 networks:
   novel-network:

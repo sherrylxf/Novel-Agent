@@ -100,6 +100,36 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ==================== AI服务 ====================
+  
+  # Ollama（本地Embedding模型服务）
+  # 使用阿里云镜像（国内访问更快）
+  ollama:
+    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/ollama:0.5.10
+    container_name: novel-dev-ollama
+    restart: always
+    ports:
+      - "11434:11434"  # Ollama API端口
+    volumes:
+      - ollama_data:/root/.ollama  # 持久化模型数据
+    environment:
+      - TZ=Asia/Shanghai
+    # 注意：首次启动需要手动拉取模型，执行：
+    # docker exec -it novel-dev-ollama ollama pull nomic-embed-text
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - novel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ==================== 管理工具 ====================
   
   # phpMyAdmin（MySQL管理工具）
@@ -120,28 +150,13 @@ services:
     networks:
       - novel-network
 
-  # pgAdmin（PostgreSQL管理工具）
-  pgadmin:
-    image: dpage/pgadmin4:9.1.0
-    container_name: novel-dev-pgadmin
-    hostname: pgadmin
-    restart: always
-    ports:
-      - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@novel.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    depends_on:
-      postgresql:
-        condition: service_healthy
-    networks:
-      - novel-network
 
 volumes:
   mysql_data:
   postgresql_data:
   neo4j_data:
   neo4j_logs:
+  ollama_data:  # Ollama模型数据持久化
 
 networks:
   novel-network:

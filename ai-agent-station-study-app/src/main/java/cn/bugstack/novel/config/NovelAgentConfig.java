@@ -1,16 +1,22 @@
 package cn.bugstack.novel.config;
 
+import cn.bugstack.novel.domain.agent.impl.extraction.InfoExtractionAgent;
 import cn.bugstack.novel.domain.agent.impl.generation.SceneGenerationAgent;
 import cn.bugstack.novel.domain.agent.impl.planning.ChapterOutlineAgent;
 import cn.bugstack.novel.domain.agent.impl.planning.NovelPlannerAgent;
 import cn.bugstack.novel.domain.agent.impl.planning.NovelSeedAgent;
 import cn.bugstack.novel.domain.agent.impl.planning.VolumePlannerAgent;
+import cn.bugstack.novel.domain.agent.impl.planning.EndingAgent;
 import cn.bugstack.novel.domain.agent.impl.validation.ConsistencyGuardAgent;
 import cn.bugstack.novel.domain.agent.impl.validation.KGRuleValidatorAgent;
 import cn.bugstack.novel.domain.agent.orchestrator.NovelAgentOrchestrator;
 import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
+import cn.bugstack.novel.domain.service.kg.KGGraphDTO;
 import cn.bugstack.novel.domain.service.rag.IRAGService;
+import cn.bugstack.novel.domain.service.rag.IRAGService.DocumentListResult;
 import cn.bugstack.novel.domain.service.rag.IRAGService.SearchResult;
+import cn.bugstack.novel.domain.service.llm.ILLMClient;
+import cn.bugstack.novel.domain.service.plot.IPlotTrackerService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -29,8 +35,6 @@ import java.util.Map;
 /**
  * Novel Agent配置类
  * 注册所有Agent到Orchestrator
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @Configuration
@@ -41,6 +45,9 @@ public class NovelAgentConfig {
     
     @Autowired
     private ApplicationContext applicationContext;
+    
+    @Autowired(required = false)
+    private ILLMClient llmClient;
     
     /**
      * 创建占位 RAG 服务 Bean
@@ -89,18 +96,47 @@ public class NovelAgentConfig {
             finalKgService = createPlaceholderKGService();
         }
         
+        // 获取ILLMClient（如果配置了）
+        ILLMClient finalLlmClient;
+        try {
+            finalLlmClient = applicationContext.getBeanProvider(ILLMClient.class)
+                    .getIfAvailable(() -> {
+                        log.warn("未找到 ILLMClient bean，Agent将使用降级策略");
+                        return null;
+                    });
+            if (finalLlmClient != null) {
+                log.info("ILLMClient已配置，Agent将使用LLM生成内容");
+            }
+        } catch (Exception e) {
+            log.warn("无法获取 ILLMClient bean，Agent将使用降级策略", e);
+            finalLlmClient = null;
+        }
+
+        IPlotTrackerService finalPlotTrackerService = applicationContext.getBeanProvider(IPlotTrackerService.class)
+                .getIfAvailable(() -> null);
+        
         // 注册规划层Agent
-        orchestrator.registerAgent("NovelSeedAgent", new NovelSeedAgent(finalRagService));
-        orchestrator.registerAgent("NovelPlannerAgent", new NovelPlannerAgent());
-        orchestrator.registerAgent("VolumePlannerAgent", new VolumePlannerAgent());
-        orchestrator.registerAgent("ChapterOutlineAgent", new ChapterOutlineAgent());
+        orchestrator.registerAgent("NovelSeedAgent", 
+                new NovelSeedAgent(finalRagService, finalLlmClient));
+        orchestrator.registerAgent("NovelPlannerAgent", 
+                new NovelPlannerAgent(finalLlmClient));
+        orchestrator.registerAgent("VolumePlannerAgent", 
+                new VolumePlannerAgent(finalLlmClient));
+        orchestrator.registerAgent("ChapterOutlineAgent", 
+                new ChapterOutlineAgent(finalLlmClient));
+        orchestrator.registerAgent("EndingAgent",
+                new EndingAgent(finalLlmClient));
         
         // 注册生成执行层Agent
-        orchestrator.registerAgent("SceneGenerationAgent", new SceneGenerationAgent(finalRagService));
+        orchestrator.registerAgent("SceneGenerationAgent", 
+                new SceneGenerationAgent(finalRagService, finalKgService, finalPlotTrackerService, finalLlmClient));
+        orchestrator.registerAgent("InfoExtractionAgent", new InfoExtractionAgent(finalLlmClient));
         
         // 注册约束与审校层Agent
-        orchestrator.registerAgent("ConsistencyGuardAgent", new ConsistencyGuardAgent(finalKgService));
-        orchestrator.registerAgent("KGRuleValidatorAgent", new KGRuleValidatorAgent(finalKgService));
+        orchestrator.registerAgent("ConsistencyGuardAgent", 
+                new ConsistencyGuardAgent(finalKgService, finalLlmClient));
+        orchestrator.registerAgent("KGRuleValidatorAgent", 
+                new KGRuleValidatorAgent(finalKgService));
         
         log.info("Agent注册完成，共注册 {} 个Agent", orchestrator.getAgentCount());
     }
@@ -118,6 +154,27 @@ public class NovelAgentConfig {
             
             @Override
             public List<SearchResult> search(String query, String language, int topK) {
+                log.debug("RAG服务占位：返回空结果");
+                return new ArrayList<>();
+            }
+
+            @Override
+            public DocumentListResult listDocuments(String novelId, String chapterId, int page, int size) {
+                DocumentListResult r = new DocumentListResult();
+                r.setList(new ArrayList<>());
+                r.setTotal(0);
+                return r;
+            }
+
+            @Override
+            public void deleteById(String id) {}
+
+            @Override
+            public void deleteByNovelId(String novelId) {}
+
+            @Override
+            public List<SearchResult> searchWithMetadataFilter(String query, String language, int topK,
+                                                              Map<String, Object> metadataFilter) {
                 log.debug("RAG服务占位：返回空结果");
                 return new ArrayList<>();
             }
@@ -158,10 +215,44 @@ public class NovelAgentConfig {
             }
             
             @Override
+            public List<String> listUnresolvedForeshadowing(String novelId) {
+                log.debug("KG服务占位：返回空伏笔列表");
+                return new ArrayList<>();
+            }
+            
+            @Override
             public boolean validateRule(String rule) {
                 log.debug("KG服务占位：规则校验默认通过");
                 return true;
             }
+
+            @Override
+            public KGGraphDTO getGraph(String novelId) {
+                log.debug("KG服务占位：返回空图");
+                return KGGraphDTO.builder().nodes(new ArrayList<>()).edges(new ArrayList<>()).build();
+            }
+
+            @Override
+            public List<Map<String, Object>> listCharacters(String novelId) {
+                return new ArrayList<>();
+            }
+
+            @Override
+            public List<Map<String, Object>> listForeshadowing(String novelId) {
+                return new ArrayList<>();
+            }
+
+            @Override
+            public void deleteCharacter(String characterId) {}
+
+            @Override
+            public void deleteForeshadowing(String foreshadowingId) {}
+
+            @Override
+            public void updateCharacter(cn.bugstack.novel.domain.model.valobj.Character character) {}
+
+            @Override
+            public void updateForeshadowing(String foreshadowingId, String content, Map<String, Object> properties) {}
         };
     }
     

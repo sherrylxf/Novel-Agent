@@ -9,8 +9,6 @@ import java.time.LocalDateTime;
 
 /**
  * 小说种子表 PO 对象
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder

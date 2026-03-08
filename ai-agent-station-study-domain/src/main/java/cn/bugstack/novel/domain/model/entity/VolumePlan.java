@@ -10,8 +10,6 @@ import java.util.List;
 /**
  * 卷/册规划
  * 一卷或一册的结构规划
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Data
 @Builder
@@ -23,6 +21,11 @@ public class VolumePlan {
      * 卷ID
      */
     private String volumeId;
+    
+    /**
+     * 小说ID
+     */
+    private String novelId;
     
     /**
      * 卷序号

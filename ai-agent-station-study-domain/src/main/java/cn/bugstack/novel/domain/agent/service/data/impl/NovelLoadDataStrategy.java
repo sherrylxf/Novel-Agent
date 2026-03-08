@@ -16,8 +16,6 @@ import java.util.concurrent.ThreadPoolExecutor;
  * 小说数据加载策略
  * 并发加载小说相关数据
  * 参考课程第3-6节：数据加载模型设计
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 @Service("novelLoadDataStrategy")

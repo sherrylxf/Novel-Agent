@@ -50,32 +50,76 @@ spring:
       username: neo4j
       password: password
   
-  # AI配置（LLM API，使用 DeepSeek）
+  # AI配置（LLM API）
   # 注意：虽然配置键名为 openai，但可以使用任何兼容 OpenAI API 格式的提供商
   ai:
     openai:
-      # DeepSeek API 配置
+      # ========== Chat API 配置（用于文本生成）==========
+      # DeepSeek API 配置（Chat API）
       api-key: ${OPENAI_API_KEY:sk-9889e7ff20d74eda8081daf6347602f9}
       base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
-      # 模型选择：deepseek-chat（非思考模式，推荐用于小说生成）
-      # - deepseek-chat: 默认4K输出，最大8K，支持FIM补全，适合章节生成（推荐）
-      # - deepseek-reasoner: 默认32K输出，最大64K，适合长文本生成，但价格更高
       chat:
         options:
           model: deepseek-chat  # 使用 deepseek-chat 模型（非思考模式）
+          temperature: 0.7  # 温度参数，控制输出的随机性（0.0-2.0）
+          max-tokens: 4096  # 最大输出token数
       
-      # 其他提供商配置（已注释）
-      # 方式二：使用 Qwen（通义千问）
-      # api-key: ${OPENAI_API_KEY:your-api-key}
+      # ========== Embeddings API 配置（用于RAG向量检索）==========
+      # ⚠️ DeepSeek 不支持 embeddings API
+      # 
+      # 推荐方案：使用本地Ollama（免费，无需API密钥）
+      # 备选方案：智谱AI、Qwen、OpenAI等
+      
+      # ========== 方案1：本地Ollama Embeddings（推荐）==========
+      # 如果Ollama容器已启动，使用以下配置：
+      # 方式一：通过环境变量配置（推荐）
+      #   Windows PowerShell: $env:EMBEDDING_API_KEY="ollama"
+      #   Windows PowerShell: $env:EMBEDDING_BASE_URL="http://localhost:11434/v1"
+      #   Linux/Mac: export EMBEDDING_API_KEY="ollama"
+      #   Linux/Mac: export EMBEDDING_BASE_URL="http://localhost:11434/v1"
+      #
+      # 方式二：直接在配置文件中设置（如果环境变量未设置，使用此配置）
+      # 注意：如果应用在Docker中运行，使用 http://ollama:11434/v1
+      #       如果应用在本地运行，使用 http://localhost:11434/v1
+      embedding:
+        options:
+          model: ${OPENAI_EMBEDDING_MODEL:nomic-embed-text}  # Ollama的embedding模型
+      
+      # Ollama Embeddings专用配置（如果环境变量未设置，使用此配置）
+      # 优先级：环境变量 > 配置文件 > 默认值（使用Chat API的配置）
+      embedding-api-key: ${EMBEDDING_API_KEY:ollama}  # Ollama不需要真实的key
+      embedding-base-url: ${EMBEDDING_BASE_URL:http://localhost:11434/v1}  # 本地运行使用localhost
+      
+      # ========== 方案2：智谱AI Embeddings（备选）==========
+      # 如果需要使用智谱AI，取消下面的注释并注释掉上面的Ollama配置
+      # embedding:
+      #   options:
+      #     model: ${OPENAI_EMBEDDING_MODEL:embedding-3}  # 智谱AI模型：embedding-3（推荐）或 embedding-2
+      # embedding-api-key: ${EMBEDDING_API_KEY:your-zhipu-api-key}
+      # embedding-base-url: ${EMBEDDING_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+      
+      # ========== 其他提供商配置示例 ==========
+      
+      # 方式一：使用 OpenAI（如果可用）
+      # api-key: ${OPENAI_API_KEY:your-openai-api-key}
+      # base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      # embedding:
+      #   options:
+      #     model: text-embedding-3-small  # 或 text-embedding-ada-002
+      
+      # 方式二：使用 Qwen（通义千问）- 支持 embeddings
+      # api-key: ${OPENAI_API_KEY:your-qwen-api-key}
       # base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      # embedding:
+      #   options:
+      #     model: text-embedding-v2  # Qwen的embeddings模型
       
-      # 方式三：使用其他兼容 OpenAI API 的提供商
-      # api-key: ${OPENAI_API_KEY:your-api-key}
-      # base-url: ${OPENAI_BASE_URL:https://your-provider.com/v1}
-      
-      # 方式四：使用本地模型（如 Ollama）
+      # 方式三：使用本地模型（如 Ollama）
       # api-key: ${OPENAI_API_KEY:ollama}  # Ollama 不需要真实的 key
       # base-url: ${OPENAI_BASE_URL:http://localhost:11434/v1}
+      # embedding:
+      #   options:
+      #     model: nomic-embed-text  # Ollama的embeddings模型
   
   # MyBatis配置
   mybatis:

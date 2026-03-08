@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.bugstack.novel.infrastructure.dao.IVolumePlanDao">
+
+    <resultMap id="VolumePlanMap" type="cn.bugstack.novel.infrastructure.dao.po.VolumePlan">
+        <id column="id" property="id"/>
+        <result column="volume_id" property="volumeId"/>
+        <result column="novel_id" property="novelId"/>
+        <result column="volume_number" property="volumeNumber"/>
+        <result column="volume_title" property="volumeTitle"/>
+        <result column="volume_theme" property="volumeTheme"/>
+        <result column="chapter_count" property="chapterCount"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="cn.bugstack.novel.infrastructure.dao.po.VolumePlan">
+        INSERT INTO volume_plan (volume_id, novel_id, volume_number, volume_title, 
+                                 volume_theme, chapter_count, create_time, update_time)
+        VALUES (#{volumeId}, #{novelId}, #{volumeNumber}, #{volumeTitle}, 
+                #{volumeTheme}, #{chapterCount}, NOW(), NOW())
+    </insert>
+
+    <insert id="batchInsert" parameterType="java.util.List">
+        INSERT INTO volume_plan (volume_id, novel_id, volume_number, volume_title, 
+                                 volume_theme, chapter_count, create_time, update_time)
+        VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.volumeId}, #{item.novelId}, #{item.volumeNumber}, #{item.volumeTitle}, 
+             #{item.volumeTheme}, #{item.chapterCount}, NOW(), NOW())
+        </foreach>
+    </insert>
+
+    <update id="updateByVolumeId" parameterType="cn.bugstack.novel.infrastructure.dao.po.VolumePlan">
+        UPDATE volume_plan
+        SET volume_title = #{volumeTitle},
+            volume_theme = #{volumeTheme},
+            chapter_count = #{chapterCount},
+            update_time = NOW()
+        WHERE volume_id = #{volumeId}
+    </update>
+
+    <select id="queryByVolumeId" parameterType="java.lang.String" resultMap="VolumePlanMap">
+        SELECT id, volume_id, novel_id, volume_number, volume_title, 
+               volume_theme, chapter_count, create_time, update_time
+        FROM volume_plan
+        WHERE volume_id = #{volumeId}
+    </select>
+
+    <select id="queryByNovelId" parameterType="java.lang.String" resultMap="VolumePlanMap">
+        SELECT id, volume_id, novel_id, volume_number, volume_title, 
+               volume_theme, chapter_count, create_time, update_time
+        FROM volume_plan
+        WHERE novel_id = #{novelId}
+        ORDER BY volume_number ASC
+    </select>
+
+    <select id="queryByNovelIdAndVolumeNumber" resultMap="VolumePlanMap">
+        SELECT id, volume_id, novel_id, volume_number, volume_title, 
+               volume_theme, chapter_count, create_time, update_time
+        FROM volume_plan
+        WHERE novel_id = #{novelId} AND volume_number = #{volumeNumber}
+    </select>
+
+    <delete id="deleteByNovelId" parameterType="java.lang.String">
+        DELETE FROM volume_plan
+        WHERE novel_id = #{novelId}
+    </delete>
+
+</mapper>

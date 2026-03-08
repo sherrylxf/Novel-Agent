@@ -5,8 +5,6 @@ import lombok.Getter;
 
 /**
  * Agent类型枚举
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Getter
 @AllArgsConstructor
@@ -30,7 +28,11 @@ public enum AgentType {
     // 约束与审校层
     CONSISTENCY_GUARD("ConsistencyGuardAgent", "一致性守护Agent"),
     KG_RULE_VALIDATOR("KGRuleValidatorAgent", "知识图谱规则校验Agent"),
+    STORY_ENDING("EndingAgent", "结局判定Agent"),
     
+    // 信息抽取层（章节/场景生成后自动抽取实体）
+    INFO_EXTRACTION("InfoExtractionAgent", "信息抽取Agent"),
+
     // 记忆与检索层
     MULTILINGUAL_RAG("MultilingualRAGAgent", "多语言RAG Agent"),
     MEMORY_MANAGER("MemoryManagerAgent", "记忆管理Agent"),

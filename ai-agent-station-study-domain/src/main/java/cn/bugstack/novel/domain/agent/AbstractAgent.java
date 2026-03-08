@@ -7,8 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Agent抽象基类
  * 提供通用的日志记录和上下文管理功能
- *
- * @author xiaofuge bugstack.cn @小傅哥
  */
 @Slf4j
 public abstract class AbstractAgent<T, R> implements IAgent<T, R> {
