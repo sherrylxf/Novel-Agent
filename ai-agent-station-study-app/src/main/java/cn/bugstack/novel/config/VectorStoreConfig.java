@@ -1,5 +1,6 @@
 package cn.bugstack.novel.config;
 
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -171,21 +172,10 @@ public class VectorStoreConfig {
         EmbeddingModel embeddingModelInstance = new EmbeddingModel() {
             @Override
             public EmbeddingResponse call(EmbeddingRequest request) {
-                // 检查请求中是否已有模型名称
-                if (request.getOptions() instanceof OpenAiEmbeddingOptions) {
-                    OpenAiEmbeddingOptions options = (OpenAiEmbeddingOptions) request.getOptions();
-                    if (options.getModel() != null && !options.getModel().isEmpty()) {
-                        // 如果已有模型名称，直接使用
-                        return baseEmbeddingModel.call(request);
-                    }
-                }
-                
-                // 如果没有模型名称，尝试通过反射修改请求对象
+                // 始终使用配置的模型名（如 nomic-embed-text），避免使用请求中自带的 OpenAI 默认 model（如 text-embedding-ada-002）
                 try {
                     java.lang.reflect.Field optionsField = EmbeddingRequest.class.getDeclaredField("options");
                     optionsField.setAccessible(true);
-                    
-                    // 创建新的选项对象，通过反射设置model字段
                     OpenAiEmbeddingOptions newOptions = OpenAiEmbeddingOptions.builder().build();
                     try {
                         java.lang.reflect.Field modelField = OpenAiEmbeddingOptions.class.getDeclaredField("model");
@@ -194,21 +184,16 @@ public class VectorStoreConfig {
                         log.debug("通过反射成功设置模型名称: {}", embeddingModel);
                     } catch (Exception e) {
                         log.warn("无法通过反射设置OpenAiEmbeddingOptions的model字段，将使用原始请求: {}", e.getMessage());
-                        // 如果无法设置，直接使用原始请求
                         return baseEmbeddingModel.call(request);
                     }
-                    
                     optionsField.set(request, newOptions);
-                    log.debug("成功修改EmbeddingRequest的options，添加模型名称: {}", embeddingModel);
+                    log.debug("EmbeddingRequest 使用配置模型: {}", embeddingModel);
                     return baseEmbeddingModel.call(request);
                 } catch (Exception ex) {
-                    // 区分反射失败和API调用失败
                     String errorMsg = ex.getMessage();
                     if (errorMsg != null && (errorMsg.contains("429") || errorMsg.contains("余额") || errorMsg.contains("1113"))) {
-                        // 这是API调用返回的错误（如余额不足），不是反射失败
                         log.warn("API调用失败（可能是账户余额问题）: {}", errorMsg);
                     } else {
-                        // 这是反射失败
                         log.warn("无法通过反射修改EmbeddingRequest的options，将使用原始请求: {}", errorMsg);
                     }
                     return baseEmbeddingModel.call(request);
@@ -217,7 +202,21 @@ public class VectorStoreConfig {
             
             @Override
             public float[] embed(Document document) {
-                return baseEmbeddingModel.embed(document);
+                // 必须带上配置的模型名，否则会走 OpenAiEmbeddingModel 默认的 text-embedding-ada-002（Ollama 不支持）
+                OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder().build();
+                try {
+                    java.lang.reflect.Field modelField = OpenAiEmbeddingOptions.class.getDeclaredField("model");
+                    modelField.setAccessible(true);
+                    modelField.set(options, embeddingModel);
+                } catch (Exception e) {
+                    log.warn("embed(Document) 设置模型失败，使用默认: {}", e.getMessage());
+                }
+                EmbeddingRequest req = new EmbeddingRequest(List.of(document.getText()), options);
+                EmbeddingResponse response = baseEmbeddingModel.call(req);
+                if (response.getResults() == null || response.getResults().isEmpty()) {
+                    return new float[0];
+                }
+                return response.getResults().get(0).getOutput();
             }
         };
         

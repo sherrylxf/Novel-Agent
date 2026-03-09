@@ -1,6 +1,12 @@
 package cn.bugstack.novel;
 
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration;
+import org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration;
 import org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -18,7 +24,14 @@ import org.springframework.retry.annotation.EnableRetry;
                 DataSourceAutoConfiguration.class,
                 Neo4jAutoConfiguration.class,
                 // 排除 Spring AI PgVectorStore 自动配置，使用自定义 VectorStoreConfig
-                PgVectorStoreAutoConfiguration.class
+                PgVectorStoreAutoConfiguration.class,
+                // 排除 OpenAI 语音/转录/Chat/Embedding/Image/Moderation 自动配置（本项目使用 LLMClientConfig + VectorStoreConfig + DeepSeek/Ollama）
+                OpenAiAudioSpeechAutoConfiguration.class,
+                OpenAiAudioTranscriptionAutoConfiguration.class,
+                OpenAiChatAutoConfiguration.class,
+                OpenAiEmbeddingAutoConfiguration.class,
+                OpenAiImageAutoConfiguration.class,
+                OpenAiModerationAutoConfiguration.class
         }
 )
 @EnableRetry
