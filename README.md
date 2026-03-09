@@ -1,6 +1,6 @@
-# Novel Agent 后端
+# Novel Agent 
 
-AI 小说创作 Agent 后端服务：支持小说规划、章节生成、知识图谱与 RAG 检索。
+AI 小说创作 Agent 服务：支持小说规划、章节生成、知识图谱与 RAG 检索。
 
 ## 项目功能
 
