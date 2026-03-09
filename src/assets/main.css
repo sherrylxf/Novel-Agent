@@ -1,0 +1,28 @@
+@import './base.css';
+
+/* 与小说管理界面一致的主题变量，供全站统一风格 */
+:root {
+  --page-bg: #f6f8fb;
+  --panel-bg: #fff;
+  --panel-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --panel-radius: 16px;
+  --text-primary: #1f2937;
+  --text-muted: #6b7280;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --secondary-bg: #e5e7eb;
+  --secondary-text: #111827;
+  --border: #e5e7eb;
+  --input-border: #d1d5db;
+  --badge-bg: #dbeafe;
+  --badge-text: #1d4ed8;
+  --meta-bg: #f8fafc;
+  --danger-bg: #fee2e2;
+  --danger-text: #b91c1c;
+  --active-row-bg: #eff6ff;
+}
+
+#app {
+  width: 100%;
+  min-height: 100vh;
+}
