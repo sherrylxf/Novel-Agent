@@ -8,6 +8,8 @@ import cn.bugstack.novel.domain.model.entity.Scene;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
 import cn.bugstack.novel.domain.service.export.IChapterFileStore;
 import cn.bugstack.novel.domain.service.persistence.INovelGenerationStoreService;
+import cn.bugstack.novel.domain.service.novel.INovelWorkspaceService;
+import cn.bugstack.novel.domain.model.entity.NovelProject;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -24,22 +26,39 @@ public class NovelGenerationStoreService implements INovelGenerationStoreService
     @Autowired(required = false)
     private IChapterFileStore chapterFileStore;
 
+    @Resource
+    private INovelWorkspaceService novelWorkspaceService;
+
     @Override
     public void persistSeed(String novelId, NovelSeed seed) {
         if (seed == null) return;
         repository.saveOrUpdateSeed(novelId, seed);
+        novelWorkspaceService.saveOrUpdateNovel(NovelProject.builder()
+                .novelId(novelId)
+                .title(seed.getTitle())
+                .genre(seed.getGenre() != null ? seed.getGenre().name() : null)
+                .status(1)
+                .build());
     }
 
     @Override
     public void persistPlan(NovelPlan plan) {
         if (plan == null) return;
         repository.saveOrUpdatePlan(plan);
+        novelWorkspaceService.saveOrUpdateNovel(NovelProject.builder()
+                .novelId(plan.getNovelId())
+                .status(1)
+                .build());
     }
 
     @Override
     public void persistVolumePlan(String novelId, VolumePlan volumePlan) {
         if (volumePlan == null) return;
         repository.saveOrUpdateVolumePlan(novelId, volumePlan);
+        novelWorkspaceService.saveOrUpdateNovel(NovelProject.builder()
+                .novelId(volumePlan.getNovelId() != null ? volumePlan.getNovelId() : novelId)
+                .status(1)
+                .build());
     }
 
     @Override
@@ -66,6 +85,11 @@ public class NovelGenerationStoreService implements INovelGenerationStoreService
                         novelId, volumeNumber, outline.getChapterNumber(), e.getMessage());
             }
         }
+
+        novelWorkspaceService.saveOrUpdateNovel(NovelProject.builder()
+                .novelId(novelId)
+                .status(1)
+                .build());
 
         return chapterId;
     }

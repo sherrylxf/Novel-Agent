@@ -38,6 +38,16 @@
         WHERE scene_id = #{sceneId}
     </update>
 
+    <delete id="deleteBySceneId" parameterType="java.lang.String">
+        DELETE FROM scene
+        WHERE scene_id = #{sceneId}
+    </delete>
+
+    <delete id="deleteByChapterId" parameterType="java.lang.String">
+        DELETE FROM scene
+        WHERE chapter_id = #{chapterId}
+    </delete>
+
     <select id="queryBySceneId" parameterType="java.lang.String" resultMap="SceneMap">
         SELECT id, scene_id, chapter_id, scene_number, scene_title, scene_type,
                content, word_count, characters, location, create_time, update_time

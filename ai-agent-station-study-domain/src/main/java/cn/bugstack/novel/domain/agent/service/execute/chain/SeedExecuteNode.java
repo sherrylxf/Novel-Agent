@@ -63,10 +63,11 @@ public class SeedExecuteNode extends AbstractExecuteSupport {
             try {
                 String novelId = context.getNovelId() != null ? context.getNovelId() : "";
                 String name = KgCharacterSyncUtil.parseProtagonistName(seed.getProtagonistSetting());
+                String canonical = KgCharacterSyncUtil.canonicalName(name);
                 String characterId = KgCharacterSyncUtil.toCharacterId(novelId, name);
                 Character protagonist = Character.builder()
                         .characterId(characterId)
-                        .name(name)
+                        .name(canonical != null && !canonical.isEmpty() ? canonical : name)
                         .novelId(novelId)
                         .type("主角")
                         .personality("")

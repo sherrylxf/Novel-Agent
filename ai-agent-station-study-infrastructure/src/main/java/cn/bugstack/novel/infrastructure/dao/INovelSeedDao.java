@@ -2,6 +2,7 @@ package cn.bugstack.novel.infrastructure.dao;
 
 import cn.bugstack.novel.infrastructure.dao.po.NovelSeed;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
@@ -24,11 +25,11 @@ public interface INovelSeedDao {
     /**
      * 根据Seed ID查询
      */
-    NovelSeed queryBySeedId(String seedId);
+    NovelSeed queryBySeedId(@Param("seedId") String seedId);
     
     /**
      * 根据小说ID查询
      */
-    List<NovelSeed> queryByNovelId(String novelId);
+    List<NovelSeed> queryByNovelId(@Param("novelId") String novelId);
     
 }

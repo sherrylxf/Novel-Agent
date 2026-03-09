@@ -15,6 +15,8 @@ import cn.bugstack.novel.domain.service.kg.KGGraphDTO;
 import cn.bugstack.novel.domain.service.rag.IRAGService;
 import cn.bugstack.novel.domain.service.rag.IRAGService.DocumentListResult;
 import cn.bugstack.novel.domain.service.rag.IRAGService.SearchResult;
+import cn.bugstack.novel.domain.service.rag.StoryContextBuilderService;
+import cn.bugstack.novel.domain.service.rag.StoryQueryBuilderService;
 import cn.bugstack.novel.domain.service.llm.ILLMClient;
 import cn.bugstack.novel.domain.service.plot.IPlotTrackerService;
 import lombok.extern.slf4j.Slf4j;
@@ -114,6 +116,10 @@ public class NovelAgentConfig {
 
         IPlotTrackerService finalPlotTrackerService = applicationContext.getBeanProvider(IPlotTrackerService.class)
                 .getIfAvailable(() -> null);
+        StoryQueryBuilderService finalStoryQueryBuilderService = applicationContext.getBeanProvider(StoryQueryBuilderService.class)
+                .getIfAvailable(() -> null);
+        StoryContextBuilderService finalStoryContextBuilderService = applicationContext.getBeanProvider(StoryContextBuilderService.class)
+                .getIfAvailable(() -> null);
         
         // 注册规划层Agent
         orchestrator.registerAgent("NovelSeedAgent", 
@@ -129,7 +135,13 @@ public class NovelAgentConfig {
         
         // 注册生成执行层Agent
         orchestrator.registerAgent("SceneGenerationAgent", 
-                new SceneGenerationAgent(finalRagService, finalKgService, finalPlotTrackerService, finalLlmClient));
+                new SceneGenerationAgent(
+                        finalRagService,
+                        finalKgService,
+                        finalPlotTrackerService,
+                        finalLlmClient,
+                        finalStoryQueryBuilderService,
+                        finalStoryContextBuilderService));
         orchestrator.registerAgent("InfoExtractionAgent", new InfoExtractionAgent(finalLlmClient));
         
         // 注册约束与审校层Agent

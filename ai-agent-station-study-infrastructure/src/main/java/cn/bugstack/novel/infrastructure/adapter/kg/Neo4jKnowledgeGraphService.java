@@ -4,6 +4,9 @@ import cn.bugstack.novel.domain.model.entity.StoryKnowledgeSnapshot;
 import cn.bugstack.novel.domain.model.valobj.Character;
 import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
 import cn.bugstack.novel.domain.service.kg.KGGraphDTO;
+import cn.bugstack.novel.domain.service.kg.KgCharacterSyncUtil;
+import cn.bugstack.novel.domain.service.kg.KgGraphDedupUtil;
+import cn.bugstack.novel.domain.service.kg.KgStorySyncUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.Session;
@@ -42,7 +45,8 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
                     c.personality = $personality,
                     c.background = $background,
                     c.abilities = $abilities,
-                    c.novelId = $novelId
+                    c.novelId = $novelId,
+                    c += $attributes
                 """;
             Map<String, Object> params = new HashMap<>();
             params.put("characterId", character.getCharacterId());
@@ -52,6 +56,7 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
             params.put("background", character.getBackground() != null ? character.getBackground() : "");
             params.put("abilities", character.getAbilities() != null ? character.getAbilities() : "");
             params.put("novelId", character.getNovelId() != null ? character.getNovelId() : "");
+            params.put("attributes", sanitizeProperties(character.getAttributes()));
             session.run(cypher, params);
             log.info("创建人物节点: {}", character.getName());
         }
@@ -138,6 +143,7 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
                         .background(getString(node, "background"))
                         .abilities(getString(node, "abilities"));
                 if (node.containsKey("novelId")) b.novelId(getString(node, "novelId"));
+                b.attributes(extractExtraCharacterAttributes(node));
                 return b.build();
             }
             
@@ -323,7 +329,75 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
             log.error("获取知识图谱失败, novelId={}", novelId, e);
             return KGGraphDTO.builder().nodes(new ArrayList<>()).edges(new ArrayList<>()).build();
         }
+        mergeDuplicateNodes(nodes, edges);
         return KGGraphDTO.builder().nodes(nodes).edges(edges).build();
+    }
+
+    /**
+     * 按规范键合并重复节点：人物、伏笔、事件、剧情线、地点等，同类型且内容/标题相近的只保留一个。
+     */
+    private void mergeDuplicateNodes(List<KGGraphDTO.GraphNode> nodes, List<KGGraphDTO.GraphEdge> edges) {
+        Map<String, KGGraphDTO.GraphNode> typeKeyToNode = new HashMap<>();
+        Map<String, String> duplicateIdToKeptId = new HashMap<>();
+        List<KGGraphDTO.GraphNode> result = new ArrayList<>();
+        for (KGGraphDTO.GraphNode n : nodes) {
+            String type = n.getType() != null ? n.getType() : "";
+            String label = n.getLabel() != null ? n.getLabel() : "";
+            Map<String, Object> props = n.getProperties() != null ? n.getProperties() : new HashMap<>();
+            String canonicalKey = KgGraphDedupUtil.canonicalKeyForNode(type, label, props);
+            if (canonicalKey == null || canonicalKey.isEmpty() || "StoryHub".equals(type)) {
+                result.add(n);
+                continue;
+            }
+            String groupKey = type + "\t" + canonicalKey;
+            KGGraphDTO.GraphNode existing = typeKeyToNode.get(groupKey);
+            if (existing == null) {
+                String displayLabel = displayLabelForMerged(type, canonicalKey, label, props);
+                KGGraphDTO.GraphNode kept = KGGraphDTO.GraphNode.builder()
+                        .id(n.getId())
+                        .label(displayLabel)
+                        .type(type)
+                        .properties(new HashMap<>(props))
+                        .build();
+                if (kept.getProperties() != null) {
+                    kept.getProperties().put("name", displayLabel);
+                    if ("Foreshadowing".equals(type)) kept.getProperties().put("content", props.get("content") != null ? props.get("content") : displayLabel);
+                }
+                typeKeyToNode.put(groupKey, kept);
+                result.add(kept);
+            } else {
+                duplicateIdToKeptId.put(n.getId(), existing.getId());
+            }
+        }
+        nodes.clear();
+        nodes.addAll(result);
+        java.util.Set<String> edgeKeys = new LinkedHashSet<>();
+        List<KGGraphDTO.GraphEdge> newEdges = new ArrayList<>();
+        for (KGGraphDTO.GraphEdge e : edges) {
+            String src = duplicateIdToKeptId.getOrDefault(e.getSource(), e.getSource());
+            String tgt = duplicateIdToKeptId.getOrDefault(e.getTarget(), e.getTarget());
+            if (src.equals(tgt)) continue;
+            String key = src + "->" + tgt;
+            if (!edgeKeys.add(key)) continue;
+            newEdges.add(KGGraphDTO.GraphEdge.builder()
+                    .id("e-" + newEdges.size())
+                    .source(src)
+                    .target(tgt)
+                    .type(e.getType() != null ? e.getType() : "")
+                    .properties(e.getProperties() != null ? e.getProperties() : new HashMap<>())
+                    .build());
+        }
+        edges.clear();
+        edges.addAll(newEdges);
+    }
+
+    private String displayLabelForMerged(String type, String canonicalKey, String originalLabel, Map<String, Object> props) {
+        if (canonicalKey == null || canonicalKey.isEmpty()) return originalLabel;
+        if ("Foreshadowing".equals(type)) {
+            String content = props != null && props.get("content") != null ? String.valueOf(props.get("content")) : canonicalKey;
+            return content.length() > 30 ? content.substring(0, 30) + "…" : content;
+        }
+        return canonicalKey.length() > 25 ? canonicalKey.substring(0, 25) + "…" : canonicalKey;
     }
 
     private void addEntityNodes(Session session, String nid, String label, String idKey, String nameKey,
@@ -558,7 +632,7 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
         try (Session session = neo4jDriver.session()) {
             String cypher = """
                 MATCH (c:Character {characterId: $characterId})
-                SET c.name = $name, c.type = $type, c.personality = $personality, c.background = $background, c.abilities = $abilities, c.novelId = $novelId
+                SET c.name = $name, c.type = $type, c.personality = $personality, c.background = $background, c.abilities = $abilities, c.novelId = $novelId, c += $attributes
                 """;
             Map<String, Object> params = new HashMap<>();
             params.put("characterId", character.getCharacterId());
@@ -568,6 +642,7 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
             params.put("background", character.getBackground() != null ? character.getBackground() : "");
             params.put("abilities", character.getAbilities() != null ? character.getAbilities() : "");
             params.put("novelId", character.getNovelId() != null ? character.getNovelId() : "");
+            params.put("attributes", sanitizeProperties(character.getAttributes()));
             session.run(cypher, params);
             log.info("更新人物节点: {}", character.getCharacterId());
         }
@@ -697,10 +772,20 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
         if (neo4jDriver == null) {
             return snapshot;
         }
+        List<String> scopedCharacterNames = KgStorySyncUtil.distinctNonBlank(characterNames);
         try (Session session = neo4jDriver.session()) {
-            snapshot.setCharacterFacts(loadCharacterFacts(session, novelId, characterNames, limit));
-            snapshot.setWorldFacts(loadWorldFacts(session, novelId, location, eventNames, limit));
+            List<String> characterFacts = loadCharacterFacts(session, novelId, scopedCharacterNames, limit);
+            List<String> factionFacts = loadFactionFacts(session, novelId, scopedCharacterNames, limit);
+            List<String> locationFacts = loadLocationFacts(session, novelId, scopedCharacterNames, location, limit);
+            List<String> eventFacts = loadEventFacts(session, novelId, scopedCharacterNames, eventNames, limit);
+            snapshot.setCharacterFacts(characterFacts);
+            snapshot.setFactionFacts(factionFacts);
+            snapshot.setLocationFacts(locationFacts);
+            snapshot.setEventFacts(eventFacts);
+            snapshot.setWorldFacts(mergeFacts(factionFacts, locationFacts, eventFacts));
             snapshot.setActivePlotThreads(listActivePlotThreads(novelId, limit));
+            snapshot.setUnresolvedClues(listUnresolvedForeshadowing(novelId));
+            snapshot.setContinuityWarnings(loadContinuityWarnings(session, novelId, scopedCharacterNames, limit));
         } catch (Exception e) {
             log.warn("构建故事知识快照失败，返回空快照", e);
         }
@@ -712,6 +797,19 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
         return node.get(key).asString();
     }
 
+    private static Map<String, Object> extractExtraCharacterAttributes(org.neo4j.driver.types.Node node) {
+        Map<String, Object> attrs = new HashMap<>();
+        java.util.Set<String> reserved = java.util.Set.of(
+                "characterId", "name", "type", "personality", "background", "abilities", "novelId");
+        for (String key : node.keys()) {
+            if (reserved.contains(key) || node.get(key).isNull()) {
+                continue;
+            }
+            attrs.put(key, node.get(key).asObject());
+        }
+        return attrs;
+    }
+
     private List<String> loadCharacterFacts(Session session, String novelId, List<String> characterNames, int limit) {
         if (characterNames == null || characterNames.isEmpty()) {
             return new ArrayList<>();
@@ -720,12 +818,27 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
             MATCH (c:Character)
             WHERE (c.novelId = $novelId OR c.novelId IS NULL OR c.novelId = '')
               AND c.name IN $names
-            OPTIONAL MATCH (c)-[r]-(other)
+            OPTIONAL MATCH (c)-[charRel]-(otherChar:Character)
+            WITH c, collect(DISTINCT type(charRel) + ':' + coalesce(otherChar.name, otherChar.characterId, ''))[0..3] AS charLinks
+            OPTIONAL MATCH (c)-[facRel]->(f:Faction)
+            WITH c, charLinks, collect(DISTINCT type(facRel) + ':' + coalesce(f.name, f.id, ''))[0..2] AS factionLinks
+            OPTIONAL MATCH (c)-[artRel]->(a:Artifact)
+            WITH c, charLinks, factionLinks, collect(DISTINCT type(artRel) + ':' + coalesce(a.name, a.id, ''))[0..2] AS artifactLinks
+            OPTIONAL MATCH (c)-[tecRel]->(t:Technique)
+            WITH c, charLinks, factionLinks, artifactLinks, collect(DISTINCT type(tecRel) + ':' + coalesce(t.name, t.id, ''))[0..2] AS techniqueLinks
+            OPTIONAL MATCH (c)-[evtRel]->(e:Event)
+            WITH c, charLinks, factionLinks, artifactLinks, techniqueLinks, collect(DISTINCT type(evtRel) + ':' + coalesce(e.name, e.id, ''))[0..2] AS eventLinks
+            OPTIONAL MATCH (c)-[locRel]->(l:Location)
             RETURN c.name AS name,
                    c.type AS type,
                    c.personality AS personality,
                    c.background AS background,
-                   collect(DISTINCT type(r) + ':' + coalesce(other.name, other.title, other.content, other.characterId, other.threadId, other.id, ''))[0..3] AS links
+                   charLinks,
+                   factionLinks,
+                   artifactLinks,
+                   techniqueLinks,
+                   eventLinks,
+                   collect(DISTINCT type(locRel) + ':' + coalesce(l.name, l.id, ''))[0..2] AS locationLinks
             LIMIT $limit
             """;
         var result = session.run(cypher, Values.parameters(
@@ -749,24 +862,18 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
             if (!background.isEmpty()) {
                 fact.append(" 背景：").append(background.length() > 80 ? background.substring(0, 80) + "..." : background);
             }
-            List<String> links = record.get("links").isNull()
-                    ? new ArrayList<>()
-                    : record.get("links").asList(v -> v.isNull() ? "" : v.asString());
-            List<String> cleanedLinks = new ArrayList<>();
-            for (String link : links) {
-                if (link != null && !link.isBlank() && !link.endsWith(":")) {
-                    cleanedLinks.add(link);
-                }
-            }
-            if (!cleanedLinks.isEmpty()) {
-                fact.append(" 关联：").append(String.join("；", cleanedLinks));
-            }
+            appendFactSection(fact, "人物关系", readLinks(record, "charLinks"));
+            appendFactSection(fact, "所属势力", readLinks(record, "factionLinks"));
+            appendFactSection(fact, "相关法宝", readLinks(record, "artifactLinks"));
+            appendFactSection(fact, "相关功法", readLinks(record, "techniqueLinks"));
+            appendFactSection(fact, "参与事件", readLinks(record, "eventLinks"));
+            appendFactSection(fact, "活动地点", readLinks(record, "locationLinks"));
             facts.add(fact.toString());
         }
         return facts;
     }
 
-    private List<String> loadWorldFacts(Session session, String novelId, String location, List<String> eventNames, int limit) {
+    private List<String> loadLocationFacts(Session session, String novelId, List<String> characterNames, String location, int limit) {
         LinkedHashSet<String> facts = new LinkedHashSet<>();
         if (location != null && !location.isBlank()) {
             String locationCypher = """
@@ -797,11 +904,44 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
                 facts.add(fact.toString());
             }
         }
+        if (characterNames != null && !characterNames.isEmpty()) {
+            String charLocationCypher = """
+                MATCH (c:Character)-[r]->(l:Location)
+                WHERE (c.novelId = $novelId OR c.novelId IS NULL OR c.novelId = '')
+                  AND c.name IN $names
+                RETURN l.name AS name,
+                       collect(DISTINCT c.name + ':' + type(r))[0..3] AS refs
+                LIMIT $limit
+                """;
+            var result = session.run(charLocationCypher, Values.parameters(
+                    "novelId", novelId != null ? novelId : "",
+                    "names", characterNames,
+                    "limit", Math.max(limit, 1)));
+            while (result.hasNext()) {
+                var record = result.next();
+                if (record.get("name").isNull()) continue;
+                StringBuilder fact = new StringBuilder("地点：").append(record.get("name").asString());
+                appendFactSection(fact, "相关人物", readLinks(record, "refs"));
+                facts.add(fact.toString());
+            }
+        }
+        return new ArrayList<>(facts);
+    }
+
+    private List<String> loadEventFacts(Session session, String novelId, List<String> characterNames, List<String> eventNames, int limit) {
+        LinkedHashSet<String> facts = new LinkedHashSet<>();
         if (eventNames != null && !eventNames.isEmpty()) {
             String eventCypher = """
                 MATCH (e:Event)
                 WHERE e.novelId = $novelId AND e.name IN $eventNames
-                RETURN e.name AS name, e.summary AS summary, e.chapterNumber AS chapterNumber
+                OPTIONAL MATCH (c:Character)-[r]->(e)
+                OPTIONAL MATCH (e)-[:OCCURS_AT]->(l:Location)
+                RETURN e.name AS name,
+                       e.eventType AS eventType,
+                       e.summary AS summary,
+                       e.chapterNumber AS chapterNumber,
+                       collect(DISTINCT c.name + ':' + type(r))[0..3] AS characters,
+                       collect(DISTINCT l.name)[0..2] AS locations
                 LIMIT $limit
                 """;
             var eventResult = session.run(eventCypher, Values.parameters(
@@ -811,16 +951,153 @@ public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
             while (eventResult.hasNext()) {
                 var record = eventResult.next();
                 StringBuilder fact = new StringBuilder("事件：").append(record.get("name").asString());
+                if (!record.get("eventType").isNull() && !record.get("eventType").asString().isBlank()) {
+                    fact.append("【").append(record.get("eventType").asString()).append("】");
+                }
                 if (!record.get("chapterNumber").isNull()) {
                     fact.append("（第").append(record.get("chapterNumber").asInt()).append("章）");
                 }
                 if (!record.get("summary").isNull() && !record.get("summary").asString().isBlank()) {
                     fact.append("，").append(record.get("summary").asString());
                 }
+                appendFactSection(fact, "关联人物", readLinks(record, "characters"));
+                appendFactSection(fact, "发生地点", readLinks(record, "locations"));
+                facts.add(fact.toString());
+            }
+        }
+        if (characterNames != null && !characterNames.isEmpty()) {
+            String recentEventCypher = """
+                MATCH (c:Character)-[r]->(e:Event)
+                WHERE (c.novelId = $novelId OR c.novelId IS NULL OR c.novelId = '')
+                  AND c.name IN $names
+                RETURN e.name AS name,
+                       e.eventType AS eventType,
+                       e.summary AS summary,
+                       collect(DISTINCT c.name + ':' + type(r))[0..3] AS refs
+                LIMIT $limit
+                """;
+            var recentEventResult = session.run(recentEventCypher, Values.parameters(
+                    "novelId", novelId != null ? novelId : "",
+                    "names", characterNames,
+                    "limit", Math.max(limit, 1)));
+            while (recentEventResult.hasNext()) {
+                var record = recentEventResult.next();
+                if (record.get("name").isNull()) continue;
+                StringBuilder fact = new StringBuilder("事件：").append(record.get("name").asString());
+                if (!record.get("eventType").isNull() && !record.get("eventType").asString().isBlank()) {
+                    fact.append("【").append(record.get("eventType").asString()).append("】");
+                }
+                if (!record.get("summary").isNull() && !record.get("summary").asString().isBlank()) {
+                    fact.append("，").append(record.get("summary").asString());
+                }
+                appendFactSection(fact, "涉及人物", readLinks(record, "refs"));
                 facts.add(fact.toString());
             }
         }
         return new ArrayList<>(facts);
+    }
+
+    private List<String> loadFactionFacts(Session session, String novelId, List<String> characterNames, int limit) {
+        LinkedHashSet<String> facts = new LinkedHashSet<>();
+        if (characterNames != null && !characterNames.isEmpty()) {
+            String conceptCypher = """
+                MATCH (c:Character)-[r]->(entity)
+                WHERE (c.novelId = $novelId OR c.novelId IS NULL OR c.novelId = '')
+                  AND c.name IN $names
+                  AND (entity:Faction OR entity:Artifact OR entity:Technique)
+                RETURN labels(entity)[0] AS entityType,
+                       coalesce(entity.name, entity.id) AS entityName,
+                       collect(DISTINCT c.name + ':' + type(r))[0..3] AS refs
+                LIMIT $limit
+                """;
+            var conceptResult = session.run(conceptCypher, Values.parameters(
+                    "novelId", novelId != null ? novelId : "",
+                    "names", characterNames,
+                    "limit", Math.max(limit * 2, 4)));
+            while (conceptResult.hasNext()) {
+                var record = conceptResult.next();
+                String entityType = record.get("entityType").isNull() ? "Concept" : record.get("entityType").asString();
+                String entityName = record.get("entityName").isNull() ? "" : record.get("entityName").asString();
+                if (entityName.isBlank()) {
+                    continue;
+                }
+                String fact = typeToChinese(entityType) + "：" + entityName
+                        + (readLinks(record, "refs").isEmpty() ? "" : " 关联人物：" + String.join("；", readLinks(record, "refs")));
+                facts.add(fact);
+            }
+        }
+        return new ArrayList<>(facts);
+    }
+
+    private List<String> loadContinuityWarnings(Session session, String novelId, List<String> characterNames, int limit) {
+        List<String> warnings = new ArrayList<>();
+        if (characterNames == null || characterNames.isEmpty()) {
+            return warnings;
+        }
+        String cypher = """
+            MATCH (c:Character)
+            WHERE (c.novelId = $novelId OR c.novelId IS NULL OR c.novelId = '')
+              AND c.name IN $names
+            RETURN c.name AS name, c.status AS status, c.goal AS goal
+            LIMIT $limit
+            """;
+        var result = session.run(cypher, Values.parameters(
+                "novelId", novelId != null ? novelId : "",
+                "names", characterNames,
+                "limit", Math.max(limit * 2, 4)));
+        while (result.hasNext()) {
+            var record = result.next();
+            String name = record.get("name").isNull() ? "" : record.get("name").asString();
+            String status = record.get("status").isNull() ? "" : record.get("status").asString();
+            String goal = record.get("goal").isNull() ? "" : record.get("goal").asString();
+            if ("DEAD".equalsIgnoreCase(status)) {
+                warnings.add("人物 " + name + " 已标记为死亡，避免继续以正常状态登场");
+            }
+            if (!goal.isBlank()) {
+                warnings.add("人物 " + name + " 当前目标：" + goal);
+            }
+        }
+        return warnings;
+    }
+
+    private List<String> mergeFacts(List<String>... parts) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (parts != null) {
+            for (List<String> part : parts) {
+                if (part != null) {
+                    merged.addAll(part);
+                }
+            }
+        }
+        return new ArrayList<>(merged);
+    }
+
+    private static List<String> readLinks(org.neo4j.driver.Record record, String key) {
+        if (record == null || key == null || record.get(key).isNull()) {
+            return new ArrayList<>();
+        }
+        List<String> values = record.get(key).asList(v -> v.isNull() ? "" : v.asString());
+        List<String> cleaned = new ArrayList<>();
+        for (String value : values) {
+            if (value != null && !value.isBlank() && !value.endsWith(":")) {
+                cleaned.add(value);
+            }
+        }
+        return cleaned;
+    }
+
+    private static void appendFactSection(StringBuilder fact, String title, List<String> links) {
+        if (fact == null || links == null || links.isEmpty()) {
+            return;
+        }
+        fact.append(" ").append(title).append("：").append(String.join("；", links));
+    }
+
+    private static String typeToChinese(String entityType) {
+        if ("Faction".equals(entityType)) return "势力";
+        if ("Artifact".equals(entityType)) return "法宝";
+        if ("Technique".equals(entityType)) return "功法";
+        return entityType != null ? entityType : "概念";
     }
 
     private static String keyPropertyForType(String entityType) {

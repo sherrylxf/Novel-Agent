@@ -2,6 +2,7 @@ package cn.bugstack.novel.infrastructure.dao;
 
 import cn.bugstack.novel.infrastructure.dao.po.NovelPlan;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
@@ -24,11 +25,11 @@ public interface INovelPlanDao {
     /**
      * 根据规划ID查询
      */
-    NovelPlan queryByPlanId(String planId);
+    NovelPlan queryByPlanId(@Param("planId") String planId);
     
     /**
      * 根据小说ID查询
      */
-    List<NovelPlan> queryByNovelId(String novelId);
+    List<NovelPlan> queryByNovelId(@Param("novelId") String novelId);
     
 }

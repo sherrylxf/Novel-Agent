@@ -8,8 +8,11 @@ import cn.bugstack.novel.domain.agent.orchestrator.NovelAgentOrchestrator;
 import cn.bugstack.novel.domain.agent.service.execute.ExecutionStateService;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.NovelPlan;
+import cn.bugstack.novel.domain.model.entity.NovelProject;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
+import cn.bugstack.novel.domain.service.novel.INovelContinuationService;
 import cn.bugstack.novel.domain.service.novel.INovelPlanService;
+import cn.bugstack.novel.domain.service.novel.INovelWorkspaceService;
 import cn.bugstack.novel.types.enums.GenerationStage;
 import com.alibaba.fastjson.JSON;
 import jakarta.servlet.http.HttpServletResponse;
@@ -46,6 +49,12 @@ public class NovelController implements INovelAgentService {
     
     @Resource
     private INovelPlanService novelPlanService;
+
+    @Resource
+    private INovelWorkspaceService novelWorkspaceService;
+
+    @Resource
+    private INovelContinuationService novelContinuationService;
     
     @Override
     @PostMapping("/generate")
@@ -102,6 +111,65 @@ public class NovelController implements INovelAgentService {
             
         } catch (Exception e) {
             log.error("请求处理异常：{}", e.getMessage(), e);
+            ResponseBodyEmitter errorEmitter = new ResponseBodyEmitter();
+            try {
+                sendError(errorEmitter, request.getSessionId(), "请求处理异常：" + e.getMessage());
+                errorEmitter.complete();
+            } catch (Exception ex) {
+                log.error("发送错误信息失败：{}", ex.getMessage(), ex);
+            }
+            return errorEmitter;
+        }
+    }
+
+    @PostMapping("/continue-chapter")
+    public ResponseBodyEmitter continueChapter(@RequestBody NovelGenerateRequestDTO request, HttpServletResponse response) {
+        log.info("收到继续创作下一章请求，novelId: {}, sessionId: {}, mode: {}",
+                request.getNovelId(), request.getSessionId(), request.getContinueMode());
+
+        try {
+            response.setContentType("text/event-stream");
+            response.setCharacterEncoding("UTF-8");
+            response.setHeader("Cache-Control", "no-cache");
+            response.setHeader("Connection", "keep-alive");
+
+            ResponseBodyEmitter emitter = new ResponseBodyEmitter(Long.MAX_VALUE);
+            executionStateService.saveEmitter(request.getSessionId(), emitter);
+
+            threadPoolExecutor.execute(() -> {
+                try {
+                    NovelContext context = executionStateService.getContext(request.getSessionId());
+                    if (context == null) {
+                        context = novelContinuationService.buildResumeContext(request.getNovelId());
+                        executionStateService.saveContext(request.getSessionId(), context);
+                    }
+
+                    if (GenerationStage.COMPLETE.name().equals(context.getCurrentStage())) {
+                        sendError(emitter, request.getSessionId(), "当前小说已经生成到规划末尾，无法继续创作新章节");
+                        return;
+                    }
+
+                    String continueMode = request.getContinueMode();
+                    if ("step".equalsIgnoreCase(continueMode)) {
+                        executeStepByStep(emitter, request.getSessionId(), context, request.getMaxStep());
+                    } else {
+                        executeUntilChapterReview(emitter, request.getSessionId(), context);
+                    }
+                } catch (Exception e) {
+                    log.error("继续创作下一章异常，novelId: {}", request.getNovelId(), e);
+                    sendError(emitter, request.getSessionId(), "继续创作异常：" + e.getMessage());
+                } finally {
+                    try {
+                        emitter.complete();
+                    } catch (Exception e) {
+                        log.error("完成继续创作流式输出失败：{}", e.getMessage(), e);
+                    }
+                }
+            });
+
+            return emitter;
+        } catch (Exception e) {
+            log.error("处理继续创作请求异常：{}", e.getMessage(), e);
             ResponseBodyEmitter errorEmitter = new ResponseBodyEmitter();
             try {
                 sendError(errorEmitter, request.getSessionId(), "请求处理异常：" + e.getMessage());
@@ -207,6 +275,47 @@ public class NovelController implements INovelAgentService {
             }
         }
     }
+
+    /**
+     * 自动继续生成，直到一章完成后的校验节点为止。
+     * 这样用户只需要在章节管理页修改确认一次，而不是为章节内每个子节点逐步确认。
+     */
+    private void executeUntilChapterReview(ResponseBodyEmitter emitter, String sessionId, NovelContext context) {
+        java.util.concurrent.locks.ReentrantLock lock = executionStateService.getLock(sessionId);
+        try {
+            lock.lock();
+            while (true) {
+                NovelAgentOrchestrator.StepExecutionResult result = orchestrator.executeNextStep(context);
+                if (!result.isSuccess()) {
+                    sendError(emitter, sessionId, result.getMessage());
+                    break;
+                }
+
+                sendProgress(emitter, sessionId, result.getCurrentStage(),
+                        String.format("节点[%s]执行完成", result.getNodeName()));
+
+                if (result.isComplete()) {
+                    NovelPlan plan = context.getAttribute("plan");
+                    sendComplete(emitter, sessionId, plan != null ? plan.getNovelId() : context.getNovelId());
+                    break;
+                }
+
+                if (GenerationStage.VALIDATION.name().equals(result.getCurrentStage())) {
+                    executionStateService.setCurrentNode(sessionId, result.getNodeName());
+                    sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(),
+                            result.getNodeName(), result.getData(), result.getNextStage());
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            log.error("自动继续生成异常，sessionId: {}", sessionId, e);
+            sendError(emitter, sessionId, "继续生成异常：" + e.getMessage());
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
+    }
     
     /**
      * 用户确认继续执行
@@ -215,8 +324,8 @@ public class NovelController implements INovelAgentService {
      */
     @PostMapping("/approve")
     public cn.bugstack.novel.api.dto.NovelGenerateResponseDTO approveAndContinue(
-            @RequestParam String sessionId,
-            @RequestParam(defaultValue = "true") boolean approved) {
+            @RequestParam("sessionId") String sessionId,
+            @RequestParam(value = "approved", defaultValue = "true") boolean approved) {
         
         log.info("收到用户确认请求，sessionId: {}, approved: {}", sessionId, approved);
         
@@ -326,6 +435,10 @@ public class NovelController implements INovelAgentService {
             
             // 保存规划
             novelPlanService.saveNovelPlan(novelPlan);
+            novelWorkspaceService.saveOrUpdateNovel(NovelProject.builder()
+                    .novelId(request.getNovelId())
+                    .status(1)
+                    .build());
             
             log.info("保存小说规划成功，planId: {}, novelId: {}", request.getPlanId(), request.getNovelId());
             
@@ -353,7 +466,7 @@ public class NovelController implements INovelAgentService {
      * 查询小说规划（根据规划ID）
      */
     @GetMapping("/plan/{planId}")
-    public Map<String, Object> queryPlanByPlanId(@PathVariable String planId) {
+    public Map<String, Object> queryPlanByPlanId(@PathVariable("planId") String planId) {
         log.info("查询小说规划，planId: {}", planId);
         
         try {
@@ -382,7 +495,7 @@ public class NovelController implements INovelAgentService {
      * 查询小说规划（根据小说ID）
      */
     @GetMapping("/plan/novel/{novelId}")
-    public Map<String, Object> queryPlanByNovelId(@PathVariable String novelId) {
+    public Map<String, Object> queryPlanByNovelId(@PathVariable("novelId") String novelId) {
         log.info("查询小说规划，novelId: {}", novelId);
         
         try {
@@ -420,6 +533,10 @@ public class NovelController implements INovelAgentService {
             
             // 更新规划
             novelPlanService.updateNovelPlan(novelPlan);
+            novelWorkspaceService.saveOrUpdateNovel(NovelProject.builder()
+                    .novelId(request.getNovelId())
+                    .status(1)
+                    .build());
             
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);

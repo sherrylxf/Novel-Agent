@@ -4,10 +4,16 @@ import cn.bugstack.novel.domain.agent.AbstractAgent;
 import cn.bugstack.novel.domain.model.entity.ChapterOutline;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.Scene;
+import cn.bugstack.novel.domain.model.entity.StoryContextBundle;
 import cn.bugstack.novel.domain.model.entity.StoryKnowledgeSnapshot;
+import cn.bugstack.novel.domain.model.entity.StoryRetrievalQuery;
+import cn.bugstack.novel.domain.model.entity.VolumePlan;
 import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
+import cn.bugstack.novel.domain.service.kg.KgStorySyncUtil;
 import cn.bugstack.novel.domain.service.rag.IRAGService;
+import cn.bugstack.novel.domain.service.rag.StoryContextBuilderService;
 import cn.bugstack.novel.domain.service.rag.StoryMemoryDocumentUtil;
+import cn.bugstack.novel.domain.service.rag.StoryQueryBuilderService;
 import cn.bugstack.novel.domain.service.llm.ILLMClient;
 import cn.bugstack.novel.domain.service.plot.IPlotTrackerService;
 import cn.bugstack.novel.types.enums.AgentType;
@@ -17,9 +23,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 场景生成Agent
@@ -28,23 +37,39 @@ import java.util.UUID;
 @Slf4j
 @Component
 public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
+
+    private static final Pattern LOCATION_PATTERN = Pattern.compile(
+            "([A-Za-z0-9\\u4e00-\\u9fa5]{2,24}(?:网吧包间|会议室|办公室|工作室|实验室|图书馆|操场|宿舍|教室|食堂|咖啡馆|酒吧|酒店|商场|公司|大厦|广场|车站|机场|小区|公寓|村口|镇上|校园|学校|包间|网吧|演武场|练功房|大殿|偏殿|后山|山谷|山洞|洞府|山门|宗门|书院|庭院|别院|王府|府邸|阁楼|楼顶|城门|城主府|街口|巷口|码头|渡口|客栈|茶馆|擂台|矿场|药园|秘境|遗迹|祭坛|平原|森林|密林|湖畔|河畔|海边|江边|宫殿|神殿|青云宗|极速网吧))");
     
     private final IRAGService ragService;
     private final IKnowledgeGraphService knowledgeGraphService;
     private final IPlotTrackerService plotTrackerService;
     private final ILLMClient llmClient;
+    private final StoryQueryBuilderService queryBuilderService;
+    private final StoryContextBuilderService contextBuilderService;
     
     @Autowired
     public SceneGenerationAgent(IRAGService ragService, ILLMClient llmClient) {
-        this(ragService, null, null, llmClient);
+        this(ragService, null, null, llmClient, null, null);
     }
 
     public SceneGenerationAgent(IRAGService ragService, IKnowledgeGraphService knowledgeGraphService, IPlotTrackerService plotTrackerService, ILLMClient llmClient) {
+        this(ragService, knowledgeGraphService, plotTrackerService, llmClient, null, null);
+    }
+
+    public SceneGenerationAgent(IRAGService ragService,
+                                IKnowledgeGraphService knowledgeGraphService,
+                                IPlotTrackerService plotTrackerService,
+                                ILLMClient llmClient,
+                                StoryQueryBuilderService queryBuilderService,
+                                StoryContextBuilderService contextBuilderService) {
         super(AgentType.SCENE_GENERATION);
         this.ragService = ragService;
         this.knowledgeGraphService = knowledgeGraphService;
         this.plotTrackerService = plotTrackerService;
         this.llmClient = llmClient;
+        this.queryBuilderService = queryBuilderService;
+        this.contextBuilderService = contextBuilderService;
     }
     
     @Override
@@ -52,26 +77,12 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
         log.info("开始生成场景，章节: {}", outline.getChapterTitle());
         
         try {
-            // 从 RAG 检索章节级/场景级记忆，而不是只拿相似正文。
             String novelId = context != null ? context.getNovelId() : null;
-            String searchQuery = StoryMemoryDocumentUtil.buildSearchQuery(outline);
-            List<String> memoryTypes = List.of("chapter_summary", "scene_summary", "scene_fulltext");
-            List<IRAGService.SearchResult> similarScenes;
-            if (novelId != null && !novelId.isEmpty()) {
-                Map<String, Object> filter = new HashMap<>();
-                filter.put("novelId", novelId);
-                filter.put("memoryType", memoryTypes);
-                similarScenes = ragService.searchWithMetadataFilter(searchQuery, "zh", 6, filter);
-                if (similarScenes.isEmpty()) {
-                    similarScenes = ragService.search(searchQuery, "zh", 6, novelId, memoryTypes);
-                }
-            } else {
-                similarScenes = ragService.search(searchQuery, "zh", 6, null, memoryTypes);
-            }
+            List<String> knowledgeCharacters = collectKnowledgeCharacters(context, outline);
             StoryKnowledgeSnapshot knowledgeSnapshot = knowledgeGraphService != null
                     ? knowledgeGraphService.buildStoryKnowledge(
                             novelId,
-                            outline.getKeyCharacters(),
+                            knowledgeCharacters,
                             null,
                             outline.getKeyEvents(),
                             5)
@@ -79,13 +90,19 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
             List<String> unresolvedForeshadowing = plotTrackerService != null
                     ? plotTrackerService.collectUnresolvedForeshadowing(novelId, outline.getForeshadowing())
                     : new ArrayList<>();
-            
-            // 调用LLM生成场景正文
-            String content = generateContent(outline, similarScenes, knowledgeSnapshot, unresolvedForeshadowing);
+
+            StoryRetrievalQuery retrievalQuery = buildRetrievalQuery(outline, context, knowledgeSnapshot);
+            StoryContextBundle contextBundle = buildStoryContext(outline, novelId, retrievalQuery, knowledgeSnapshot, unresolvedForeshadowing);
+            if (context != null) {
+                context.setAttribute("latestStoryRetrievalQuery", retrievalQuery);
+                context.setAttribute("latestStoryContextBundle", contextBundle);
+            }
+
+            String content = generateContent(outline, contextBundle);
             
             // 提取场景类型和地点
             String sceneType = extractSceneType(content);
-            String location = extractLocation(content);
+            String location = extractLocation(outline, content);
             
             Scene scene = Scene.builder()
                     .sceneId(UUID.randomUUID().toString())
@@ -111,46 +128,22 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
     /**
      * 调用LLM生成场景正文（3000字左右）
      */
-    private String generateContent(
-            ChapterOutline outline,
-            List<IRAGService.SearchResult> similarScenes,
-            StoryKnowledgeSnapshot knowledgeSnapshot,
-            List<String> unresolvedForeshadowing) {
+    private String generateContent(ChapterOutline outline, StoryContextBundle contextBundle) {
         if (llmClient == null) {
             return generateFallbackContent(outline);
         }
         
         try {
-            // 构建RAG参考内容
-            StringBuilder ragContext = new StringBuilder();
-            if (!similarScenes.isEmpty()) {
-                ragContext.append("\n相关剧情记忆：\n");
-                for (var result : similarScenes) {
-                    Object memoryType = result.getMetadata() != null ? result.getMetadata().get("memoryType") : "";
-                    String excerpt = result.getContent().substring(0,
-                            Math.min(300, result.getContent().length()));
-                    ragContext.append("[").append(memoryType).append("] ");
-                    ragContext.append(excerpt).append("\n---\n");
-                }
-            }
-
-            String worldContext = formatList("世界设定", knowledgeSnapshot != null ? knowledgeSnapshot.getWorldFacts() : null);
-            String characterContext = formatList("人物关系与设定", knowledgeSnapshot != null ? knowledgeSnapshot.getCharacterFacts() : null);
-            String plotContext = formatList("活跃剧情线程", knowledgeSnapshot != null ? knowledgeSnapshot.getActivePlotThreads() : null);
-            String unresolvedContext = formatList("未回收伏笔", unresolvedForeshadowing);
-            
             String systemPrompt = "你是一个专业的小说创作助手。根据章节梗概生成详细的场景正文。" +
-                    "要求：1. 字数约3000字；2. 文笔流畅，情节生动；3. 严格遵守人物设定、世界规则和剧情线程；4. 参考相似风格但要有创新。";
+                    "要求：1. 字数约3000字；2. 文笔流畅，情节生动；3. 严格遵守人物设定、世界规则和剧情线程；4. 优先参考结构化上下文，不直接复述历史文本。";
             
             String template = "章节标题：{chapterTitle}\n" +
                     "章节梗概：{outline}\n" +
                     "关键人物：{keyCharacters}\n" +
                     "关键事件：{keyEvents}\n" +
-                    "{worldContext}\n" +
-                    "{characterContext}\n" +
-                    "{plotContext}\n" +
-                    "{unresolvedContext}\n" +
-                    "{ragContext}\n\n" +
+                    "{historyBackground}\n" +
+                    "{characterMemory}\n" +
+                    "{activeThreads}\n\n" +
                     "请根据以上信息生成详细的场景正文（约3000字），要求文笔流畅，情节生动，符合章节梗概，并确保前后设定一致。";
             
             Map<String, Object> variables = new HashMap<>();
@@ -160,11 +153,9 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
                     String.join("、", outline.getKeyCharacters()) : "");
             variables.put("keyEvents", outline.getKeyEvents() != null ? 
                     String.join("、", outline.getKeyEvents()) : "");
-            variables.put("worldContext", worldContext);
-            variables.put("characterContext", characterContext);
-            variables.put("plotContext", plotContext);
-            variables.put("unresolvedContext", unresolvedContext);
-            variables.put("ragContext", ragContext.toString());
+            variables.put("historyBackground", contextBundle != null ? contextBundle.getHistoryBackground() : "");
+            variables.put("characterMemory", contextBundle != null ? contextBundle.getCharacterMemory() : "");
+            variables.put("activeThreads", contextBundle != null ? contextBundle.getActiveThreads() : "");
             
             String content = llmClient.callWithTemplate(systemPrompt, template, variables);
             
@@ -182,6 +173,67 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
         }
     }
 
+    private StoryRetrievalQuery buildRetrievalQuery(ChapterOutline outline,
+                                                    NovelContext context,
+                                                    StoryKnowledgeSnapshot knowledgeSnapshot) {
+        if (queryBuilderService != null) {
+            return queryBuilderService.buildSceneQuery(outline, context, knowledgeSnapshot);
+        }
+        return StoryRetrievalQuery.builder()
+                .novelId(context != null ? context.getNovelId() : null)
+                .queryText(StoryMemoryDocumentUtil.buildSearchQuery(outline))
+                .memoryTypes(new ArrayList<>(List.of("chapter_summary", "scene_summary", "scene_fulltext")))
+                .chapterTo(outline != null ? outline.getChapterNumber() : null)
+                .topK(3)
+                .build();
+    }
+
+    private StoryContextBundle buildStoryContext(ChapterOutline outline,
+                                                 String novelId,
+                                                 StoryRetrievalQuery retrievalQuery,
+                                                 StoryKnowledgeSnapshot knowledgeSnapshot,
+                                                 List<String> unresolvedForeshadowing) {
+        if (contextBuilderService != null) {
+            return contextBuilderService.buildSceneContext(retrievalQuery, knowledgeSnapshot, unresolvedForeshadowing);
+        }
+
+        List<String> memoryTypes = retrievalQuery != null && retrievalQuery.getMemoryTypes() != null
+                ? retrievalQuery.getMemoryTypes()
+                : List.of("chapter_summary", "scene_summary", "scene_fulltext");
+        List<IRAGService.SearchResult> similarScenes;
+        if (novelId != null && !novelId.isEmpty()) {
+            Map<String, Object> filter = new HashMap<>();
+            filter.put("novelId", novelId);
+            filter.put("memoryType", memoryTypes);
+            similarScenes = ragService.searchWithMetadataFilter(
+                    retrievalQuery != null ? retrievalQuery.getQueryText() : StoryMemoryDocumentUtil.buildSearchQuery(outline),
+                    "zh",
+                    6,
+                    filter);
+            if (similarScenes.isEmpty()) {
+                similarScenes = ragService.search(
+                        retrievalQuery != null ? retrievalQuery.getQueryText() : StoryMemoryDocumentUtil.buildSearchQuery(outline),
+                        "zh",
+                        6,
+                        novelId,
+                        memoryTypes);
+            }
+        } else {
+            similarScenes = ragService.search(
+                    retrievalQuery != null ? retrievalQuery.getQueryText() : StoryMemoryDocumentUtil.buildSearchQuery(outline),
+                    "zh",
+                    6,
+                    null,
+                    memoryTypes);
+        }
+        return StoryContextBundle.builder()
+                .historyBackground(formatSearchResults("历史背景", similarScenes))
+                .characterMemory(formatList("人物与地点约束", knowledgeSnapshot != null ? knowledgeSnapshot.getCharacterFacts() : null))
+                .activeThreads(formatList("相关剧情线程", unresolvedForeshadowing))
+                .citedMemories(similarScenes)
+                .build();
+    }
+
     private String formatList(String title, List<String> lines) {
         if (lines == null || lines.isEmpty()) {
             return "";
@@ -196,6 +248,59 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
             return "";
         }
         return title + "：\n" + String.join("\n", validLines);
+    }
+
+    private String formatSearchResults(String title, List<IRAGService.SearchResult> results) {
+        if (results == null || results.isEmpty()) {
+            return "";
+        }
+        List<String> lines = new ArrayList<>();
+        for (IRAGService.SearchResult result : results) {
+            if (result == null || result.getContent() == null || result.getContent().trim().isEmpty()) {
+                continue;
+            }
+            Object memoryType = result.getMetadata() != null ? result.getMetadata().get("memoryType") : "";
+            lines.add("- [" + memoryType + "] " + StoryMemoryDocumentUtil.excerpt(result.getContent(), 180));
+            if (lines.size() >= 4) {
+                break;
+            }
+        }
+        if (lines.isEmpty()) {
+            return "";
+        }
+        return title + "：\n" + String.join("\n", lines);
+    }
+
+    private List<String> collectKnowledgeCharacters(NovelContext context, ChapterOutline outline) {
+        LinkedHashSet<String> names = new LinkedHashSet<>(KgStorySyncUtil.distinctNonBlank(
+                outline != null ? outline.getKeyCharacters() : null));
+        if (outline != null && outline.getScenes() != null) {
+            for (Scene scene : outline.getScenes()) {
+                if (scene == null || scene.getCharacters() == null) {
+                    continue;
+                }
+                names.addAll(KgStorySyncUtil.distinctNonBlank(List.of(scene.getCharacters())));
+            }
+        }
+        VolumePlan currentVolume = context != null ? context.getAttribute("currentVolume") : null;
+        if (currentVolume != null && currentVolume.getChapterOutlines() != null) {
+            for (ChapterOutline chapter : currentVolume.getChapterOutlines()) {
+                if (chapter == null || chapter == outline) {
+                    continue;
+                }
+                names.addAll(KgStorySyncUtil.distinctNonBlank(chapter.getKeyCharacters()));
+                if (chapter.getScenes() == null) {
+                    continue;
+                }
+                for (Scene scene : chapter.getScenes()) {
+                    if (scene == null || scene.getCharacters() == null) {
+                        continue;
+                    }
+                    names.addAll(KgStorySyncUtil.distinctNonBlank(List.of(scene.getCharacters())));
+                }
+            }
+        }
+        return new ArrayList<>(names);
     }
     
     /**
@@ -224,15 +329,63 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
     /**
      * 提取地点
      */
-    private String extractLocation(String content) {
-        // 简单提取地点关键词
-        String[] locations = {"山", "洞", "城", "府", "院", "林", "海", "湖"};
-        for (String loc : locations) {
-            if (content.contains(loc)) {
-                return loc + "（待完善）";
+    private String extractLocation(ChapterOutline outline, String content) {
+        List<String> texts = new ArrayList<>();
+        if (outline != null) {
+            texts.add(outline.getChapterTitle());
+            texts.add(outline.getOutline());
+        }
+        texts.add(content);
+
+        for (String text : texts) {
+            String candidate = findBestLocationCandidate(text);
+            if (candidate != null) {
+                return candidate;
             }
         }
         return "待确定";
+    }
+
+    private String findBestLocationCandidate(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        Matcher matcher = LOCATION_PATTERN.matcher(text);
+        String best = null;
+        while (matcher.find()) {
+            String candidate = matcher.group(1);
+            if (!KgStorySyncUtil.hasMeaningfulText(candidate)) {
+                continue;
+            }
+            String normalized = normalizeLocation(candidate);
+            if (normalized == null) {
+                continue;
+            }
+            if (best == null || normalized.length() > best.length()) {
+                best = normalized;
+            }
+        }
+        return best;
+    }
+
+    private String normalizeLocation(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String candidate = raw
+                .replace("“", "")
+                .replace("”", "")
+                .replace("\"", "")
+                .replace("《", "")
+                .replace("》", "")
+                .trim();
+        if (candidate.length() < 2) {
+            return null;
+        }
+        if ("待确定".equals(candidate) || candidate.endsWith("待完善")) {
+            return null;
+        }
+        return candidate;
     }
     
     /**

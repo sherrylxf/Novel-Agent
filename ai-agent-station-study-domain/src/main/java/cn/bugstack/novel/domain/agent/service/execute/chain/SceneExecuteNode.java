@@ -7,23 +7,21 @@ import cn.bugstack.novel.domain.model.entity.ChapterOutline;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.Scene;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
-import cn.bugstack.novel.domain.model.valobj.Character;
 import cn.bugstack.novel.domain.model.entity.ExtractedEntities;
-import cn.bugstack.novel.domain.service.kg.ExtractedEntitySyncService;
-import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
-import cn.bugstack.novel.domain.service.kg.KgCharacterSyncUtil;
+import cn.bugstack.novel.domain.service.kg.KgSyncFacade;
 import cn.bugstack.novel.domain.service.kg.KgStorySyncUtil;
 import cn.bugstack.novel.domain.service.rag.IRAGService;
 import cn.bugstack.novel.domain.service.rag.StoryMemoryDocumentUtil;
 import cn.bugstack.novel.domain.service.persistence.INovelGenerationStoreService;
 import cn.bugstack.novel.types.enums.GenerationStage;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
 import org.springframework.context.annotation.Lazy;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -45,11 +43,8 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
     @Resource
     private IRAGService ragService;
     
-    @Autowired(required = false)
-    private IKnowledgeGraphService knowledgeGraphService;
-
     @Resource
-    private ExtractedEntitySyncService extractedEntitySyncService;
+    private KgSyncFacade kgSyncFacade;
     
     @Resource
     private ValidationExecuteNode validationExecuteNode;
@@ -83,80 +78,23 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
             VolumePlan volumePlan = context.getAttribute("currentVolume");
             Integer volumeNumber = volumePlan != null ? volumePlan.getVolumeNumber() : null;
             String chapterId = generationStoreService.persistChapterAndScene(context.getNovelId(), volumeNumber, outline, scene);
+            ExtractedEntities extractedEntities = null;
             if (chapterId != null && outline != null) {
                 outline.setChapterId(chapterId);
             }
             
-            // 将场景中出现的人物同步到知识图谱，便于关系与一致性校验
-            if (knowledgeGraphService != null && scene != null && scene.getCharacters() != null && scene.getCharacters().length > 0) {
-                String novelId = context.getNovelId() != null ? context.getNovelId() : "";
-                List<Character> toSync = KgCharacterSyncUtil.buildCharactersFromScene(novelId, scene.getCharacters(), "配角");
-                for (Character c : toSync) {
-                    try {
-                        knowledgeGraphService.createCharacter(c);
-                    } catch (Exception e) {
-                        log.warn("场景人物写入知识图谱失败，跳过，name={}, err: {}", c.getName(), e.getMessage());
-                    }
-                }
-                if (!toSync.isEmpty()) {
-                    log.info("KG存储: 场景人物已同步到知识图谱, novelId={}, count={}", novelId, toSync.size());
-                }
-
-                Map<String, Object> relationProps = new java.util.HashMap<>();
-                relationProps.put("chapterId", outline != null ? outline.getChapterId() : null);
-                relationProps.put("sceneId", scene.getSceneId());
-                relationProps.put("sceneTitle", scene.getSceneTitle());
-                relationProps.put("chapterNumber", outline != null ? outline.getChapterNumber() : null);
-
-                String eventId = KgStorySyncUtil.toEventId(novelId, scene.getSceneTitle());
-                java.util.Map<String, Object> eventProps = new java.util.HashMap<>();
-                eventProps.put("chapterId", outline != null ? outline.getChapterId() : null);
-                eventProps.put("chapterNumber", outline != null ? outline.getChapterNumber() : null);
-                eventProps.put("sceneId", scene.getSceneId());
-                eventProps.put("summary", StoryMemoryDocumentUtil.excerpt(scene.getContent(), 220));
-                knowledgeGraphService.upsertEntity(novelId, "Event", eventId, scene.getSceneTitle(), eventProps);
-
-                if (KgStorySyncUtil.hasMeaningfulText(scene.getLocation())) {
-                    String locationId = KgStorySyncUtil.toLocationId(novelId, scene.getLocation());
-                    java.util.Map<String, Object> locationProps = new java.util.HashMap<>();
-                    locationProps.put("description", outline != null ? outline.getOutline() : "");
-                    locationProps.put("latestSceneId", scene.getSceneId());
-                    locationProps.put("latestChapterId", outline != null ? outline.getChapterId() : null);
-                    knowledgeGraphService.upsertEntity(novelId, "Location", locationId, scene.getLocation(), locationProps);
-                    knowledgeGraphService.createEntityRelationship("Event", eventId, "Location", locationId, "OCCURS_AT", relationProps);
-                    for (String characterName : scene.getCharacters()) {
-                        String characterId = KgCharacterSyncUtil.toCharacterId(novelId, characterName);
-                        knowledgeGraphService.createEntityRelationship("Character", characterId, "Location", locationId, "APPEARS_AT", relationProps);
-                    }
-                }
-
-                for (String characterName : scene.getCharacters()) {
-                    String characterId = KgCharacterSyncUtil.toCharacterId(novelId, characterName);
-                    knowledgeGraphService.createEntityRelationship("Character", characterId, "Event", eventId, "PARTICIPATES_IN", relationProps);
-                }
-
-                if (outline != null && outline.getForeshadowing() != null) {
-                    for (String threadTitle : outline.getForeshadowing()) {
-                        if (!KgStorySyncUtil.hasMeaningfulText(threadTitle)) {
-                            continue;
-                        }
-                        String threadId = KgStorySyncUtil.toPlotThreadId(novelId, threadTitle);
-                        knowledgeGraphService.upsertPlotThread(novelId, threadId, threadTitle, "ACTIVE", relationProps);
-                        knowledgeGraphService.createEntityRelationship("PlotThread", threadId, "Event", eventId, "ADVANCES", relationProps);
-                    }
-                }
+            if (scene != null) {
+                kgSyncFacade.syncSceneStructure(context.getNovelId(), outline, scene);
             }
 
             // 信息抽取 Agent：从正文深挖 人物/地点/势力/法宝/功法/关系/伏笔，补充到 KG
-            if (extractedEntitySyncService != null && knowledgeGraphService != null && scene != null
-                    && scene.getContent() != null && !scene.getContent().isBlank()) {
+            if (scene != null && scene.getContent() != null && !scene.getContent().isBlank()) {
                 try {
                     IAgent<Object[], ExtractedEntities> extractionAgent = orchestrator.getAgent("InfoExtractionAgent");
                     if (extractionAgent != null) {
-                        ExtractedEntities entities = extractionAgent.execute(
+                        extractedEntities = extractionAgent.execute(
                                 new Object[]{outline, scene}, context);
-                        extractedEntitySyncService.syncToKnowledgeGraph(
-                                context.getNovelId(), entities, outline, scene);
+                        kgSyncFacade.syncExtractedEntities(context.getNovelId(), extractedEntities, outline, scene);
                     }
                 } catch (Exception e) {
                     log.warn("信息抽取或同步KG失败，不阻塞主流程: {}", e.getMessage());
@@ -166,6 +104,10 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
             if (scene != null && scene.getContent() != null && !scene.getContent().isEmpty()) {
                 try {
                     java.util.Map<String, Object> metadata = new java.util.HashMap<>();
+                    String createdAt = LocalDateTime.now().toString();
+                    List<String> eventNames = collectEventNames(outline, scene, extractedEntities);
+                    List<String> plotThreadTitles = collectPlotThreadTitles(outline, extractedEntities);
+                    List<String> characterNames = collectCharacterNames(scene, extractedEntities);
                     metadata.put("novelId", context.getNovelId());
                     metadata.put("volumeNumber", volumeNumber);
                     metadata.put("chapterId", outline != null ? outline.getChapterId() : null);
@@ -175,12 +117,23 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
                     metadata.put("sceneNumber", scene.getSceneNumber());
                     metadata.put("sceneTitle", scene.getSceneTitle());
                     metadata.put("sceneType", scene.getSceneType());
-                    if (scene.getCharacters() != null && scene.getCharacters().length > 0) {
-                        metadata.put("characters", String.join(",", scene.getCharacters()));
+                    if (!characterNames.isEmpty()) {
+                        metadata.put("characters", String.join(",", characterNames));
                     }
                     if (scene.getLocation() != null && !scene.getLocation().isEmpty()) {
                         metadata.put("location", scene.getLocation());
                     }
+                    metadata.put("characterIds", KgStorySyncUtil.toCharacterIds(context.getNovelId(),
+                            characterNames));
+                    metadata.put("eventIds", buildSceneEventIds(context.getNovelId(), outline, scene, extractedEntities));
+                    metadata.put("plotThreadIds", buildPlotThreadIds(context.getNovelId(), outline, extractedEntities));
+                    metadata.put("events", StoryMemoryDocumentUtil.join(eventNames, ","));
+                    metadata.put("plotThreads", StoryMemoryDocumentUtil.join(plotThreadTitles, ","));
+                    metadata.put("factionIds", extractedEntities != null
+                            ? KgStorySyncUtil.toFactionIds(context.getNovelId(), extractedEntities.getFactions())
+                            : new ArrayList<String>());
+                    metadata.put("createdAt", createdAt);
+                    metadata.put("importance", resolveImportance(extractedEntities));
 
                     java.util.Map<String, Object> summaryMetadata = new java.util.HashMap<>(metadata);
                     summaryMetadata.put("memoryType", "scene_summary");
@@ -191,6 +144,45 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
                     fulltextMetadata.put("memoryType", "scene_fulltext");
                     fulltextMetadata.put("scope", "scene");
                     ragService.addDocument(StoryMemoryDocumentUtil.buildSceneFullTextDocument(outline, scene), "zh", fulltextMetadata);
+
+                    for (String characterName : characterNames) {
+                        java.util.Map<String, Object> characterMetadata = new java.util.HashMap<>(metadata);
+                        characterMetadata.put("memoryType", "character_memory");
+                        characterMetadata.put("scope", "character");
+                        characterMetadata.put("characters", characterName);
+                        characterMetadata.put("importance", Math.max(resolveImportance(extractedEntities), 0.7D));
+                        ragService.addDocument(
+                                StoryMemoryDocumentUtil.buildCharacterMemoryDocument(
+                                        characterName,
+                                        outline,
+                                        scene,
+                                        eventNames,
+                                        plotThreadTitles),
+                                "zh",
+                                characterMetadata);
+                    }
+
+                    for (ExtractedEntities.PlotThreadSignal signal : extractedEntities != null
+                            ? extractedEntities.getPlotThreadSignals()
+                            : List.<ExtractedEntities.PlotThreadSignal>of()) {
+                        if (signal == null || !KgStorySyncUtil.hasMeaningfulText(signal.getThreadTitle())) {
+                            continue;
+                        }
+                        java.util.Map<String, Object> threadMetadata = new java.util.HashMap<>(metadata);
+                        threadMetadata.put("memoryType", "plot_thread_summary");
+                        threadMetadata.put("scope", "plot_thread");
+                        threadMetadata.put("plotThreads", signal.getThreadTitle().trim());
+                        threadMetadata.put("importance", Math.max(resolveImportance(extractedEntities), 0.75D));
+                        ragService.addDocument(
+                                StoryMemoryDocumentUtil.buildPlotThreadSummaryDocument(
+                                        signal.getThreadTitle().trim(),
+                                        outline,
+                                        scene,
+                                        signal.getSummary() != null ? signal.getSummary() : signal.getEvidence(),
+                                        eventNames),
+                                "zh",
+                                threadMetadata);
+                    }
 
                     log.info("RAG存储: 场景摘要与正文已写入向量库，novelId={}, sceneId={}, chapterNumber={}", context.getNovelId(), scene.getSceneId(), outline != null ? outline.getChapterNumber() : null);
                 } catch (Exception e) {
@@ -208,6 +200,94 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
     @Override
     public AbstractExecuteSupport getNext(NovelContext context) {
         return validationExecuteNode;
+    }
+
+    private List<String> buildSceneEventIds(String novelId, ChapterOutline outline, Scene scene, ExtractedEntities extractedEntities) {
+        if (extractedEntities != null && extractedEntities.getEvents() != null && !extractedEntities.getEvents().isEmpty()) {
+            return KgStorySyncUtil.toEventIds(novelId,
+                    outline != null ? outline.getChapterId() : null,
+                    scene != null ? scene.getSceneId() : null,
+                    extractedEntities.getEvents());
+        }
+        if (scene == null || !KgStorySyncUtil.hasMeaningfulText(scene.getSceneTitle())) {
+            return new ArrayList<>();
+        }
+        return List.of(KgStorySyncUtil.toSceneEventId(novelId,
+                outline != null ? outline.getChapterId() : null,
+                scene.getSceneId(),
+                scene.getSceneTitle()));
+    }
+
+    private List<String> buildPlotThreadIds(String novelId, ChapterOutline outline, ExtractedEntities extractedEntities) {
+        List<String> threadTitles = new ArrayList<>();
+        if (outline != null && outline.getForeshadowing() != null) {
+            threadTitles.addAll(KgStorySyncUtil.distinctNonBlank(outline.getForeshadowing()));
+        }
+        if (extractedEntities != null && extractedEntities.getPlotThreadSignals() != null) {
+            for (ExtractedEntities.PlotThreadSignal signal : extractedEntities.getPlotThreadSignals()) {
+                if (signal != null && KgStorySyncUtil.hasMeaningfulText(signal.getThreadTitle())) {
+                    threadTitles.add(signal.getThreadTitle().trim());
+                }
+            }
+        }
+        return KgStorySyncUtil.toPlotThreadIds(novelId, threadTitles);
+    }
+
+    private List<String> collectEventNames(ChapterOutline outline, Scene scene, ExtractedEntities extractedEntities) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        if (outline != null && outline.getKeyEvents() != null) {
+            names.addAll(KgStorySyncUtil.distinctNonBlank(outline.getKeyEvents()));
+        }
+        if (extractedEntities != null && extractedEntities.getEvents() != null) {
+            for (ExtractedEntities.EventRecord event : extractedEntities.getEvents()) {
+                if (event != null && KgStorySyncUtil.hasMeaningfulText(event.getName())) {
+                    names.add(event.getName().trim());
+                }
+            }
+        }
+        if (scene != null && KgStorySyncUtil.hasMeaningfulText(scene.getSceneTitle())) {
+            names.add(scene.getSceneTitle().trim());
+        }
+        return new ArrayList<>(names);
+    }
+
+    private List<String> collectPlotThreadTitles(ChapterOutline outline, ExtractedEntities extractedEntities) {
+        LinkedHashSet<String> titles = new LinkedHashSet<>();
+        if (outline != null && outline.getForeshadowing() != null) {
+            titles.addAll(KgStorySyncUtil.distinctNonBlank(outline.getForeshadowing()));
+        }
+        if (extractedEntities != null && extractedEntities.getPlotThreadSignals() != null) {
+            for (ExtractedEntities.PlotThreadSignal signal : extractedEntities.getPlotThreadSignals()) {
+                if (signal != null && KgStorySyncUtil.hasMeaningfulText(signal.getThreadTitle())) {
+                    titles.add(signal.getThreadTitle().trim());
+                }
+            }
+        }
+        return new ArrayList<>(titles);
+    }
+
+    private List<String> collectCharacterNames(Scene scene, ExtractedEntities extractedEntities) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        if (scene != null && scene.getCharacters() != null) {
+            names.addAll(KgStorySyncUtil.distinctNonBlank(scene.getCharacters()));
+        }
+        if (extractedEntities != null && extractedEntities.getCharacters() != null) {
+            names.addAll(KgStorySyncUtil.distinctNonBlank(extractedEntities.getCharacters()));
+        }
+        return new ArrayList<>(names);
+    }
+
+    private double resolveImportance(ExtractedEntities extractedEntities) {
+        if (extractedEntities == null || extractedEntities.getEvents() == null || extractedEntities.getEvents().isEmpty()) {
+            return 0.7D;
+        }
+        double max = 0.0D;
+        for (ExtractedEntities.EventRecord event : extractedEntities.getEvents()) {
+            if (event != null && event.getImportance() != null) {
+                max = Math.max(max, event.getImportance());
+            }
+        }
+        return max > 0.0D ? Math.min(max, 1.0D) : 0.7D;
     }
     
 }

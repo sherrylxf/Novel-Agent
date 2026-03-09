@@ -82,7 +82,7 @@ public class TestController {
      * 测试查询
      */
     @GetMapping("/db/query")
-    public Map<String, Object> testQuery(@RequestParam(required = false) String planId) {
+    public Map<String, Object> testQuery(@RequestParam(value = "planId", required = false) String planId) {
         Map<String, Object> result = new HashMap<>();
         
         try {

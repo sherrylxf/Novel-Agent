@@ -55,8 +55,8 @@ spring:
   ai:
     openai:
       # ========== Chat API 配置（用于文本生成）==========
-      # DeepSeek API 配置（Chat API）
-      api-key: ${OPENAI_API_KEY:sk-9889e7ff20d74eda8081daf6347602f9}
+      # DeepSeek / OpenAI 等：请通过环境变量 OPENAI_API_KEY 配置，切勿在配置文件中填写真实 Key
+      api-key: ${OPENAI_API_KEY:}
       base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
       chat:
         options:

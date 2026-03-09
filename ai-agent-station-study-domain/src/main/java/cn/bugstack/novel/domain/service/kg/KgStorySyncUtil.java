@@ -1,5 +1,7 @@
 package cn.bugstack.novel.domain.service.kg;
 
+import cn.bugstack.novel.domain.model.entity.ExtractedEntities;
+
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -18,6 +20,16 @@ public final class KgStorySyncUtil {
 
     public static String toEventId(String novelId, String eventName) {
         return toEntityId(novelId, "evt", eventName);
+    }
+
+    public static String toChapterEventId(String novelId, String chapterId, String eventName) {
+        return toEntityId(novelId, "evt_" + KgCharacterSyncUtil.sanitizeForId(chapterId), eventName);
+    }
+
+    public static String toSceneEventId(String novelId, String chapterId, String sceneId, String eventName) {
+        String scopedPrefix = "evt_" + KgCharacterSyncUtil.sanitizeForId(chapterId)
+                + "_" + KgCharacterSyncUtil.sanitizeForId(sceneId);
+        return toEntityId(novelId, scopedPrefix, eventName);
     }
 
     public static String toPlotThreadId(String novelId, String title) {
@@ -71,5 +83,59 @@ public final class KgStorySyncUtil {
             }
         }
         return new ArrayList<>(set);
+    }
+
+    public static List<String> distinctNonBlank(String[] items) {
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        if (items != null) {
+            for (String item : items) {
+                if (item == null) {
+                    continue;
+                }
+                String normalized = item.trim();
+                if (!normalized.isEmpty()) {
+                    set.add(normalized);
+                }
+            }
+        }
+        return new ArrayList<>(set);
+    }
+
+    public static List<String> toCharacterIds(String novelId, List<String> names) {
+        List<String> ids = new ArrayList<>();
+        for (String name : distinctNonBlank(names)) {
+            ids.add(KgCharacterSyncUtil.toCharacterId(novelId, name));
+        }
+        return ids;
+    }
+
+    public static List<String> toFactionIds(String novelId, List<String> names) {
+        List<String> ids = new ArrayList<>();
+        for (String name : distinctNonBlank(names)) {
+            ids.add(toFactionId(novelId, name));
+        }
+        return ids;
+    }
+
+    public static List<String> toPlotThreadIds(String novelId, List<String> titles) {
+        List<String> ids = new ArrayList<>();
+        for (String title : distinctNonBlank(titles)) {
+            ids.add(toPlotThreadId(novelId, title));
+        }
+        return ids;
+    }
+
+    public static List<String> toEventIds(String novelId, String chapterId, String sceneId, List<ExtractedEntities.EventRecord> events) {
+        List<String> ids = new ArrayList<>();
+        if (events == null) {
+            return ids;
+        }
+        for (ExtractedEntities.EventRecord event : events) {
+            if (event == null || !hasMeaningfulText(event.getName())) {
+                continue;
+            }
+            ids.add(toSceneEventId(novelId, chapterId, sceneId, event.getName()));
+        }
+        return ids;
     }
 }

@@ -38,6 +38,11 @@
         WHERE chapter_id = #{chapterId}
     </update>
 
+    <delete id="deleteByChapterId" parameterType="java.lang.String">
+        DELETE FROM chapter
+        WHERE chapter_id = #{chapterId}
+    </delete>
+
     <select id="queryByChapterId" parameterType="java.lang.String" resultMap="ChapterMap">
         SELECT id, chapter_id, novel_id, volume_number, chapter_number, title,
                outline, content, word_count, status, create_time, update_time

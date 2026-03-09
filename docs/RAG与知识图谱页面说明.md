@@ -21,8 +21,7 @@
 
 ### 前端页面
 
-- 访问：启动应用后打开 **http://localhost:8080/kg.html**
-- 功能：输入小说 ID 后点击「加载图谱」渲染图（Cytoscape.js）；侧边栏为节点列表，点击节点可看详情并删除。
+- 使用 **Frontend** 项目中的知识图谱页（见下方「入口与静态资源」），输入小说 ID 后点击「加载图谱」渲染图；支持节点类型/关系类型筛选、布局与主题切换。
 
 ---
 
@@ -41,25 +40,18 @@
 
 ### 前端页面
 
-- 访问：**http://localhost:8080/rag.html**
-- 功能：表格展示文档列表（小说/卷/章、场景、内容摘要）；可按小说ID、章节ID 筛选、分页；搜索框调用检索接口，下方展示命中文档与相似度。
+- 使用 **Frontend** 项目中的 RAG 文档库页：表格展示文档列表；可按小说ID、章节ID 筛选、分页；搜索框调用检索接口。
 
 ---
 
 ## 3. 入口与静态资源
 
-### Vue 前端（推荐）
-
-- 启动前端：在 `Frontend` 目录执行 `npm run dev`，访问 **http://localhost:3000/**
+- **前端**：在仓库根目录下的 **Frontend** 目录执行 `npm run dev`，访问 **http://localhost:3000/**
 - 顶部导航：**小说生成**（首页）、**知识图谱**（/kg）、**RAG 文档库**（/rag）
 - 知识图谱页：http://localhost:3000/kg  
 - RAG 文档库页：http://localhost:3000/rag  
 - 前端通过 `VITE_API_BASE_URL`（默认 `http://localhost:8091`）或 Vite 代理（/api → 8091）访问后端，请确保 Novel Agent 后端已启动（如 8091 端口）。
-
-### 后端静态页（可选）
-
-- 若直接访问后端：**http://localhost:8091/** 或 **http://localhost:8091/kg.html**、**http://localhost:8091/rag.html**（端口以实际为准，如 8091）。
-- 静态页面位于：`ai-agent-station-study-app/src/main/resources/static/`（kg.html、rag.html、index.html）。
+- 后端仅提供 API，不再包含静态 HTML 页面。
 
 ---
 

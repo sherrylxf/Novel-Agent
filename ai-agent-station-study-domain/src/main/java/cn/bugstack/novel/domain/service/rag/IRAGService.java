@@ -1,5 +1,9 @@
 package cn.bugstack.novel.domain.service.rag;
 
+import cn.bugstack.novel.domain.model.entity.StoryRetrievalQuery;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -56,27 +60,14 @@ public interface IRAGService {
      * chapter_summary / scene_summary / scene_fulltext / character_profile
      */
     default List<SearchResult> search(String query, String language, int topK, String novelId, List<String> memoryTypes) {
-        List<SearchResult> all = search(query, language, Math.max(topK * 4, 12), novelId);
-        if (memoryTypes == null || memoryTypes.isEmpty()) {
-            return all.size() > topK ? all.subList(0, topK) : all;
+        Map<String, Object> filter = new LinkedHashMap<>();
+        if (novelId != null && !novelId.isEmpty()) {
+            filter.put("novelId", novelId);
         }
-        java.util.Set<String> typeSet = new java.util.HashSet<>();
-        for (String memoryType : memoryTypes) {
-            if (memoryType != null && !memoryType.isBlank()) {
-                typeSet.add(memoryType.trim());
-            }
+        if (memoryTypes != null && !memoryTypes.isEmpty()) {
+            filter.put("memoryType", memoryTypes);
         }
-        List<SearchResult> filtered = new java.util.ArrayList<>();
-        for (SearchResult result : all) {
-            Object memoryType = result.getMetadata() != null ? result.getMetadata().get("memoryType") : null;
-            if (memoryType != null && typeSet.contains(memoryType.toString())) {
-                filtered.add(result);
-                if (filtered.size() >= topK) {
-                    break;
-                }
-            }
-        }
-        return filtered;
+        return searchWithMetadataFilter(query, language, topK, filter);
     }
 
     /**
@@ -95,6 +86,29 @@ public interface IRAGService {
     }
 
     /**
+     * 分层检索指定 memoryType。
+     */
+    default List<SearchResult> searchByLayer(String queryText,
+                                             StoryRetrievalQuery retrievalQuery,
+                                             List<String> memoryTypes) {
+        Map<String, Object> filter = buildMetadataFilter(retrievalQuery, memoryTypes);
+        int topK = retrievalQuery != null && retrievalQuery.getTopK() != null
+                ? retrievalQuery.getTopK()
+                : 3;
+        return searchWithMetadataFilter(queryText, "zh", topK, filter);
+    }
+
+    /**
+     * 面向小说生成的结构化检索入口。
+     */
+    default List<SearchResult> searchStoryMemories(StoryRetrievalQuery retrievalQuery) {
+        if (retrievalQuery == null) {
+            return new ArrayList<>();
+        }
+        return searchByLayer(retrievalQuery.getQueryText(), retrievalQuery, retrievalQuery.getMemoryTypes());
+    }
+
+    /**
      * 分页列出文档（按 novelId、可选 chapterId 筛选）
      *
      * @param novelId 小说ID，可为空表示不过滤
@@ -106,9 +120,24 @@ public interface IRAGService {
     DocumentListResult listDocuments(String novelId, String chapterId, int page, int size);
 
     /**
+     * 分页列出文档（支持额外 metadata 过滤）
+     */
+    default DocumentListResult listDocuments(String novelId, String chapterId, int page, int size,
+                                             Map<String, Object> metadataFilter) {
+        return listDocuments(novelId, chapterId, page, size);
+    }
+
+    /**
      * 按主键删除一条文档
      */
     void deleteById(String id);
+
+    /**
+     * 按主键查询一条文档详情
+     */
+    default DocumentItem getDocumentById(String id) {
+        return null;
+    }
 
     /**
      * 按小说ID删除该小说下所有向量文档
@@ -132,10 +161,13 @@ public interface IRAGService {
      */
     class DocumentItem {
         private String id;
+        private String content;
         private String contentSummary;
         private Map<String, Object> metadata;
         public String getId() { return id; }
         public void setId(String id) { this.id = id; }
+        public String getContent() { return content; }
+        public void setContent(String content) { this.content = content; }
         public String getContentSummary() { return contentSummary; }
         public void setContentSummary(String contentSummary) { this.contentSummary = contentSummary; }
         public Map<String, Object> getMetadata() { return metadata; }
@@ -146,17 +178,63 @@ public interface IRAGService {
      * 检索结果
      */
     class SearchResult {
+        private String id;
         private String content;
         private Double score;
+        private Double similarityScore;
+        private Double recencyScore;
+        private Double finalScore;
         private Map<String, Object> metadata;
+        private Map<String, Object> explain;
         
         // Getters and Setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
         public String getContent() { return content; }
         public void setContent(String content) { this.content = content; }
         public Double getScore() { return score; }
         public void setScore(Double score) { this.score = score; }
+        public Double getSimilarityScore() { return similarityScore; }
+        public void setSimilarityScore(Double similarityScore) { this.similarityScore = similarityScore; }
+        public Double getRecencyScore() { return recencyScore; }
+        public void setRecencyScore(Double recencyScore) { this.recencyScore = recencyScore; }
+        public Double getFinalScore() { return finalScore; }
+        public void setFinalScore(Double finalScore) { this.finalScore = finalScore; }
         public Map<String, Object> getMetadata() { return metadata; }
         public void setMetadata(Map<String, Object> metadata) { this.metadata = metadata; }
+        public Map<String, Object> getExplain() { return explain; }
+        public void setExplain(Map<String, Object> explain) { this.explain = explain; }
     }
-    
+
+    private static Map<String, Object> buildMetadataFilter(StoryRetrievalQuery retrievalQuery, List<String> memoryTypes) {
+        Map<String, Object> filter = new LinkedHashMap<>();
+        if (retrievalQuery == null) {
+            return filter;
+        }
+        if (retrievalQuery.getNovelId() != null && !retrievalQuery.getNovelId().isBlank()) {
+            filter.put("novelId", retrievalQuery.getNovelId().trim());
+        }
+        if (memoryTypes != null && !memoryTypes.isEmpty()) {
+            filter.put("memoryType", memoryTypes);
+        }
+        if (retrievalQuery.getCharacters() != null && !retrievalQuery.getCharacters().isEmpty()) {
+            filter.put("characters", retrievalQuery.getCharacters());
+        }
+        if (retrievalQuery.getLocations() != null && !retrievalQuery.getLocations().isEmpty()) {
+            filter.put("location", retrievalQuery.getLocations());
+        }
+        if (retrievalQuery.getPlotThreads() != null && !retrievalQuery.getPlotThreads().isEmpty()) {
+            filter.put("plotThreads", retrievalQuery.getPlotThreads());
+        }
+        if (retrievalQuery.getChapterFrom() != null) {
+            filter.put("chapterNumberFrom", retrievalQuery.getChapterFrom());
+        }
+        if (retrievalQuery.getChapterTo() != null) {
+            filter.put("chapterNumberTo", retrievalQuery.getChapterTo());
+        }
+        if (retrievalQuery.getExtraFilters() != null && !retrievalQuery.getExtraFilters().isEmpty()) {
+            filter.putAll(retrievalQuery.getExtraFilters());
+        }
+        return filter;
+    }
 }

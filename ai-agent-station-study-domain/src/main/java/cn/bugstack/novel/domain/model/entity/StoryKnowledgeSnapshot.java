@@ -25,5 +25,20 @@ public class StoryKnowledgeSnapshot {
     private List<String> characterFacts = new ArrayList<>();
 
     @Builder.Default
+    private List<String> factionFacts = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> locationFacts = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> eventFacts = new ArrayList<>();
+
+    @Builder.Default
     private List<String> activePlotThreads = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> unresolvedClues = new ArrayList<>();
+
+    @Builder.Default
+    private List<String> continuityWarnings = new ArrayList<>();
 }

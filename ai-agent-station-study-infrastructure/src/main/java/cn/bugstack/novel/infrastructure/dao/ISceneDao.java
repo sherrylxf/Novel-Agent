@@ -2,6 +2,7 @@ package cn.bugstack.novel.infrastructure.dao;
 
 import cn.bugstack.novel.infrastructure.dao.po.Scene;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
@@ -15,10 +16,15 @@ public interface ISceneDao {
 
     int updateBySceneId(Scene scene);
 
-    Scene queryBySceneId(String sceneId);
+    int deleteBySceneId(@Param("sceneId") String sceneId);
 
-    List<Scene> queryByChapterId(String chapterId);
+    int deleteByChapterId(@Param("chapterId") String chapterId);
 
-    Scene queryByChapterIdAndSceneNumber(String chapterId, Integer sceneNumber);
+    Scene queryBySceneId(@Param("sceneId") String sceneId);
+
+    List<Scene> queryByChapterId(@Param("chapterId") String chapterId);
+
+    Scene queryByChapterIdAndSceneNumber(@Param("chapterId") String chapterId,
+                                         @Param("sceneNumber") Integer sceneNumber);
 }
 

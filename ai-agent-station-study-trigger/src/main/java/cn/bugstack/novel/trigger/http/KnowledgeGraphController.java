@@ -49,7 +49,7 @@ public class KnowledgeGraphController {
      * GET /api/kg/graph?novelId=xxx
      */
     @GetMapping("/graph")
-    public Map<String, Object> getGraph(@RequestParam(required = false) String novelId) {
+    public Map<String, Object> getGraph(@RequestParam(value = "novelId", required = false) String novelId) {
         Map<String, Object> result = new HashMap<>();
         try {
             KGGraphDTO dto = knowledgeGraphService.getGraph(novelId != null ? novelId : "");
@@ -69,7 +69,7 @@ public class KnowledgeGraphController {
      * GET /api/kg/characters?novelId=xxx
      */
     @GetMapping("/characters")
-    public Map<String, Object> listCharacters(@RequestParam(required = false) String novelId) {
+    public Map<String, Object> listCharacters(@RequestParam(value = "novelId", required = false) String novelId) {
         Map<String, Object> result = new HashMap<>();
         try {
             List<Map<String, Object>> list = knowledgeGraphService.listCharacters(novelId != null ? novelId : "");
@@ -88,7 +88,7 @@ public class KnowledgeGraphController {
      * GET /api/kg/foreshadowing?novelId=xxx
      */
     @GetMapping("/foreshadowing")
-    public Map<String, Object> listForeshadowing(@RequestParam(required = false) String novelId) {
+    public Map<String, Object> listForeshadowing(@RequestParam(value = "novelId", required = false) String novelId) {
         Map<String, Object> result = new HashMap<>();
         try {
             List<Map<String, Object>> list = knowledgeGraphService.listForeshadowing(novelId != null ? novelId : "");
@@ -164,7 +164,7 @@ public class KnowledgeGraphController {
      * DELETE /api/kg/character?characterId=xxx
      */
     @DeleteMapping("/character")
-    public Map<String, Object> deleteCharacter(@RequestParam String characterId) {
+    public Map<String, Object> deleteCharacter(@RequestParam("characterId") String characterId) {
         Map<String, Object> result = new HashMap<>();
         try {
             knowledgeGraphService.deleteCharacter(characterId);
@@ -233,7 +233,7 @@ public class KnowledgeGraphController {
      * DELETE /api/kg/foreshadowing?foreshadowingId=xxx
      */
     @DeleteMapping("/foreshadowing")
-    public Map<String, Object> deleteForeshadowing(@RequestParam String foreshadowingId) {
+    public Map<String, Object> deleteForeshadowing(@RequestParam("foreshadowingId") String foreshadowingId) {
         Map<String, Object> result = new HashMap<>();
         try {
             knowledgeGraphService.deleteForeshadowing(foreshadowingId);

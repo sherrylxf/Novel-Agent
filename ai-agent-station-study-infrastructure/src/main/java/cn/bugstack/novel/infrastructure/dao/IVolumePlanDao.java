@@ -2,6 +2,7 @@ package cn.bugstack.novel.infrastructure.dao;
 
 import cn.bugstack.novel.infrastructure.dao.po.VolumePlan;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
@@ -19,7 +20,7 @@ public interface IVolumePlanDao {
     /**
      * 批量插入卷规划
      */
-    int batchInsert(List<VolumePlan> volumePlans);
+    int batchInsert(@Param("list") List<VolumePlan> volumePlans);
     
     /**
      * 根据卷ID更新
@@ -29,21 +30,22 @@ public interface IVolumePlanDao {
     /**
      * 根据卷ID查询
      */
-    VolumePlan queryByVolumeId(String volumeId);
+    VolumePlan queryByVolumeId(@Param("volumeId") String volumeId);
     
     /**
      * 根据小说ID查询所有卷规划
      */
-    List<VolumePlan> queryByNovelId(String novelId);
+    List<VolumePlan> queryByNovelId(@Param("novelId") String novelId);
     
     /**
      * 根据小说ID和卷序号查询
      */
-    VolumePlan queryByNovelIdAndVolumeNumber(String novelId, Integer volumeNumber);
+    VolumePlan queryByNovelIdAndVolumeNumber(@Param("novelId") String novelId,
+                                             @Param("volumeNumber") Integer volumeNumber);
     
     /**
      * 根据小说ID删除所有卷规划
      */
-    int deleteByNovelId(String novelId);
+    int deleteByNovelId(@Param("novelId") String novelId);
     
 }

@@ -2,6 +2,7 @@ package cn.bugstack.novel.infrastructure.dao;
 
 import cn.bugstack.novel.infrastructure.dao.po.Chapter;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
@@ -15,10 +16,14 @@ public interface IChapterDao {
 
     int updateByChapterId(Chapter chapter);
 
-    Chapter queryByChapterId(String chapterId);
+    int deleteByChapterId(@Param("chapterId") String chapterId);
 
-    Chapter queryByNovelIdAndVolumeAndChapter(String novelId, Integer volumeNumber, Integer chapterNumber);
+    Chapter queryByChapterId(@Param("chapterId") String chapterId);
 
-    List<Chapter> queryByNovelId(String novelId);
+    Chapter queryByNovelIdAndVolumeAndChapter(@Param("novelId") String novelId,
+                                              @Param("volumeNumber") Integer volumeNumber,
+                                              @Param("chapterNumber") Integer chapterNumber);
+
+    List<Chapter> queryByNovelId(@Param("novelId") String novelId);
 }
 

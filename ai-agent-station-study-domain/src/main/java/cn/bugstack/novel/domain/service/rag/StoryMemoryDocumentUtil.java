@@ -2,6 +2,7 @@ package cn.bugstack.novel.domain.service.rag;
 
 import cn.bugstack.novel.domain.model.entity.ChapterOutline;
 import cn.bugstack.novel.domain.model.entity.Scene;
+import cn.bugstack.novel.domain.service.kg.KgStorySyncUtil;
 
 import java.util.Collection;
 
@@ -57,6 +58,45 @@ public final class StoryMemoryDocumentUtil {
         String content = scene.getContent() != null ? scene.getContent() : "";
         content = excerpt(content, SCENE_FULLTEXT_MAX_CHARS);
         sb.append("场景正文：\n").append(content);
+        return sb.toString().trim();
+    }
+
+    public static String buildCharacterMemoryDocument(String characterName,
+                                                      ChapterOutline outline,
+                                                      Scene scene,
+                                                      Collection<String> relatedEvents,
+                                                      Collection<String> plotThreads) {
+        if (characterName == null || characterName.trim().isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        appendLine(sb, "人物", characterName);
+        appendLine(sb, "章节标题", outline != null ? outline.getChapterTitle() : "");
+        appendLine(sb, "章节梗概", outline != null ? outline.getOutline() : "");
+        appendLine(sb, "场景标题", scene != null ? scene.getSceneTitle() : "");
+        appendLine(sb, "发生地点", scene != null ? scene.getLocation() : "");
+        appendLine(sb, "相关事件", join(relatedEvents, "、"));
+        appendLine(sb, "关联剧情线程", join(plotThreads, "、"));
+        appendLine(sb, "人物记忆", buildCharacterMemorySummary(characterName, outline, scene));
+        return sb.toString().trim();
+    }
+
+    public static String buildPlotThreadSummaryDocument(String plotThreadTitle,
+                                                        ChapterOutline outline,
+                                                        Scene scene,
+                                                        String signalSummary,
+                                                        Collection<String> relatedEvents) {
+        if (plotThreadTitle == null || plotThreadTitle.trim().isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        appendLine(sb, "剧情线程", plotThreadTitle);
+        appendLine(sb, "章节标题", outline != null ? outline.getChapterTitle() : "");
+        appendLine(sb, "章节梗概", outline != null ? outline.getOutline() : "");
+        appendLine(sb, "场景标题", scene != null ? scene.getSceneTitle() : "");
+        appendLine(sb, "相关事件", join(relatedEvents, "、"));
+        appendLine(sb, "推进摘要", signalSummary);
+        appendLine(sb, "场景片段", excerpt(scene != null ? scene.getContent() : "", 220));
         return sb.toString().trim();
     }
 
@@ -116,6 +156,26 @@ public final class StoryMemoryDocumentUtil {
             return normalized;
         }
         return normalized.substring(0, Math.max(maxLength, 0)) + "...";
+    }
+
+    private static String buildCharacterMemorySummary(String characterName, ChapterOutline outline, Scene scene) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(characterName.trim());
+        if (outline != null && outline.getChapterNumber() != null) {
+            sb.append("在第").append(outline.getChapterNumber()).append("章");
+        }
+        if (KgStorySyncUtil.hasMeaningfulText(outline != null ? outline.getChapterTitle() : null)) {
+            sb.append("《").append(outline.getChapterTitle().trim()).append("》");
+        }
+        if (KgStorySyncUtil.hasMeaningfulText(scene != null ? scene.getLocation() : null)) {
+            sb.append("于").append(scene.getLocation().trim());
+        }
+        if (KgStorySyncUtil.hasMeaningfulText(scene != null ? scene.getSceneTitle() : null)) {
+            sb.append("经历").append(scene.getSceneTitle().trim());
+        } else if (KgStorySyncUtil.hasMeaningfulText(outline != null ? outline.getOutline() : null)) {
+            sb.append("经历").append(excerpt(outline.getOutline(), 80));
+        }
+        return sb.toString();
     }
 
     private static void appendLine(StringBuilder sb, String label, String value) {

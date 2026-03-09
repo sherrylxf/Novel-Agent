@@ -42,13 +42,15 @@ public class ConsistencyGuardAgent extends AbstractAgent<Scene, Boolean> {
                 String characterId = KgCharacterSyncUtil.toCharacterId(novelId != null ? novelId : "", characterName);
                 Character character = kgService.queryCharacter(characterId);
                 if (character != null) {
-                    // 调用LLM检查性格是否一致
-                    if (!checkPersonalityConsistency(scene.getContent(), character)) {
-                        log.warn("人物 {} 性格不一致", characterName);
-                        return false;
+                    // 仅当 KG 中有性格/背景设定时才做一致性检查，避免空设定被 LLM 误判为不一致
+                    boolean hasPersonality = character.getPersonality() != null && !character.getPersonality().isBlank();
+                    boolean hasBackground = character.getBackground() != null && !character.getBackground().isBlank();
+                    if (hasPersonality || hasBackground) {
+                        if (!checkPersonalityConsistency(scene.getContent(), character)) {
+                            log.warn("人物 {} 性格不一致", characterName);
+                            return false;
+                        }
                     }
-                    
-                    // 检查关系一致性
                     if (!checkRelationshipConsistency(scene, character)) {
                         log.warn("人物 {} 关系不一致", characterName);
                         return false;

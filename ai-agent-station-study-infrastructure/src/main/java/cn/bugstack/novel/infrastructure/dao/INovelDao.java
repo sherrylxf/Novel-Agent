@@ -2,6 +2,7 @@ package cn.bugstack.novel.infrastructure.dao;
 
 import cn.bugstack.novel.infrastructure.dao.po.Novel;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
@@ -24,7 +25,7 @@ public interface INovelDao {
     /**
      * 根据小说ID查询
      */
-    Novel queryByNovelId(String novelId);
+    Novel queryByNovelId(@Param("novelId") String novelId);
     
     /**
      * 查询所有启用的小说
@@ -34,6 +35,6 @@ public interface INovelDao {
     /**
      * 根据题材查询
      */
-    List<Novel> queryByGenre(String genre);
+    List<Novel> queryByGenre(@Param("genre") String genre);
     
 }

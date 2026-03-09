@@ -17,12 +17,38 @@ public final class KgCharacterSyncUtil {
     private KgCharacterSyncUtil() {}
 
     /**
-     * 生成稳定的人物ID（同一小说下同名人物唯一）
-     * 用于 Neo4j 节点标识，仅保留字母、数字、中文、下划线。
+     * 人物名规范化为“核心名”，用于去重：同一人物不同写法（如 主角'林衍' / 林衍、苏砚（穿越后原名）... / 苏砚）映射到同一节点。
+     */
+    public static String canonicalName(String name) {
+        if (name == null || name.isEmpty()) return "";
+        String s = name.trim();
+        // 去掉 主角'xxx' 或 主角"xxx" 的外层
+        if (s.startsWith("主角'") && s.length() > 3 && s.indexOf("'", 3) > 0) {
+            int end = s.indexOf("'", 3);
+            s = s.substring(3, end).trim();
+        } else if (s.startsWith("主角\"") && s.length() > 3 && s.indexOf("\"", 3) > 0) {
+            int end = s.indexOf("\"", 3);
+            s = s.substring(3, end).trim();
+        }
+        // 去掉全角括号及其中内容：苏砚（穿越后原名） -> 苏砚
+        int p = s.indexOf("（");
+        if (p < 0) p = s.indexOf("(");
+        if (p > 0) s = s.substring(0, p).trim();
+        // 去掉句号后的补充说明：xxx。年龄：28岁 -> xxx
+        int dot = s.indexOf("。");
+        if (dot > 0) s = s.substring(0, dot).trim();
+        return s.isEmpty() ? name.trim() : s;
+    }
+
+    /**
+     * 生成稳定的人物ID（同一小说下同一规范名唯一，避免重复节点）
+     * 使用规范名生成 ID，仅保留字母、数字、中文、下划线。
      */
     public static String toCharacterId(String novelId, String name) {
         if (novelId == null) novelId = "";
-        String safe = sanitizeForId(name);
+        String canonical = canonicalName(name);
+        String safe = sanitizeForId(canonical);
+        if (safe.isEmpty()) safe = sanitizeForId(name);
         if (safe.isEmpty()) safe = "unknown";
         return novelId + "_c_" + safe;
     }
@@ -66,6 +92,7 @@ public final class KgCharacterSyncUtil {
 
     /**
      * 为章节/场景中出现的人物构建 Character 列表（用于 MERGE 写入 KG）
+     * 使用规范名作为节点 name，与 toCharacterId 一致，避免同一人物多节点重复。
      */
     public static List<Character> buildCharactersForSync(String novelId, List<String> names, String defaultType) {
         List<Character> list = new ArrayList<>();
@@ -73,9 +100,10 @@ public final class KgCharacterSyncUtil {
         for (String name : names) {
             if (name == null || name.trim().isEmpty()) continue;
             String n = name.trim();
+            String canonical = canonicalName(n);
             list.add(Character.builder()
                     .characterId(toCharacterId(novelId, n))
-                    .name(n)
+                    .name(canonical.isEmpty() ? n : canonical)
                     .novelId(novelId != null ? novelId : "")
                     .type(defaultType != null ? defaultType : "配角")
                     .personality("")

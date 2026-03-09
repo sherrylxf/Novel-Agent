@@ -54,5 +54,10 @@ public class NovelGenerateRequestDTO implements Serializable {
      * 目标总字数（可选，不填则使用默认100万字）
      */
     private Integer targetWordCount;
+
+    /**
+     * 继续创作模式：auto=自动完成一章，step=逐步确认
+     */
+    private String continueMode;
     
 }
