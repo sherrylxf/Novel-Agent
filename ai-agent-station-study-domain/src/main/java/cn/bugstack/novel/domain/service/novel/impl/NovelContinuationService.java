@@ -10,6 +10,7 @@ import cn.bugstack.novel.domain.service.novel.INovelContinuationService;
 import cn.bugstack.novel.domain.service.novel.INovelPlanService;
 import cn.bugstack.novel.domain.service.novel.INovelWorkspaceService;
 import cn.bugstack.novel.types.enums.GenerationStage;
+import cn.bugstack.novel.types.enums.PipelineExecutionState;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -54,9 +55,14 @@ public class NovelContinuationService implements INovelContinuationService {
 
         ResumePointer pointer = resolveResumePointer(plan, chapters);
 
+        PipelineExecutionState pipelineState = GenerationStage.COMPLETE.name().equals(pointer.stage)
+                ? PipelineExecutionState.COMPLETED
+                : PipelineExecutionState.PENDING;
+
         NovelContext context = NovelContext.builder()
                 .novelId(novelId)
                 .currentStage(pointer.stage)
+                .pipelineExecutionState(pipelineState)
                 .build();
 
         context.setAttribute("plan", plan);

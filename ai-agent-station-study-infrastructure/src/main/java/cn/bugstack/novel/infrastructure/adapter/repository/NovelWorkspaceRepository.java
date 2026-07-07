@@ -91,6 +91,13 @@ public class NovelWorkspaceRepository implements INovelWorkspaceRepository {
     }
 
     @Override
+    public List<NovelProject> queryAllNovelProjects() {
+        return novelDao.queryAllNovels().stream()
+                .map(this::buildNovelProject)
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public NovelProject queryNovelProject(String novelId) {
         if (!hasText(novelId)) {
             return null;
@@ -174,6 +181,31 @@ public class NovelWorkspaceRepository implements INovelWorkspaceRepository {
         return chapterDao.queryByNovelId(novelId.trim()).stream()
                 .map(this::convertChapter)
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public String getChapterContent(String novelId, Integer volumeNumber, Integer chapterNumber) {
+        if (!hasText(novelId) || volumeNumber == null || chapterNumber == null) {
+            return null;
+        }
+        Chapter chapter = chapterDao.queryByNovelIdAndVolumeAndChapter(novelId.trim(), volumeNumber, chapterNumber);
+        if (chapter == null) {
+            return null;
+        }
+        String content = chapter.getContent();
+        if (content == null || content.isBlank()) {
+            List<Scene> scenes = sceneDao.queryByChapterId(chapter.getChapterId());
+            if (scenes != null && !scenes.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Scene s : scenes) {
+                    if (s != null && s.getContent() != null) {
+                        sb.append(s.getContent());
+                    }
+                }
+                return sb.toString();
+            }
+        }
+        return content;
     }
 
     @Override

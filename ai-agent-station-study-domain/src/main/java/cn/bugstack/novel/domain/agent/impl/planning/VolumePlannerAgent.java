@@ -5,6 +5,7 @@ import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.NovelPlan;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
 import cn.bugstack.novel.domain.service.llm.ILLMClient;
+import cn.bugstack.novel.domain.service.plot.StoryPacingPolicy;
 import cn.bugstack.novel.types.enums.AgentType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -41,13 +42,15 @@ public class VolumePlannerAgent extends AbstractAgent<Object[], VolumePlan> {
             String volumeTitle = generateVolumeTitle(plan, volumeNumber);
             String volumeTheme = generateVolumeTheme(plan, volumeNumber);
             
+            int chapterCount = StoryPacingPolicy.resolveChapterCountForVolume(plan, volumeNumber);
+
             VolumePlan volumePlan = VolumePlan.builder()
                     .volumeId(UUID.randomUUID().toString())
                     .novelId(plan != null ? plan.getNovelId() : null)
                     .volumeNumber(volumeNumber)
                     .volumeTitle(volumeTitle)
                     .volumeTheme(volumeTheme)
-                    .chapterCount(plan.getChaptersPerVolume())
+                    .chapterCount(chapterCount)
                     .chapterOutlines(new ArrayList<>())
                     .build();
             
@@ -116,13 +119,14 @@ public class VolumePlannerAgent extends AbstractAgent<Object[], VolumePlan> {
      * 降级策略
      */
     private VolumePlan generateFallbackVolumePlan(NovelPlan plan, int volumeNumber) {
+        int chapterCount = StoryPacingPolicy.resolveChapterCountForVolume(plan, volumeNumber);
         return VolumePlan.builder()
                 .volumeId(UUID.randomUUID().toString())
                 .novelId(plan != null ? plan.getNovelId() : null)
                 .volumeNumber(volumeNumber)
                 .volumeTitle("第" + volumeNumber + "卷")
                 .volumeTheme(String.format("第%d卷主题：主角的成长与突破", volumeNumber))
-                .chapterCount(plan.getChaptersPerVolume())
+                .chapterCount(chapterCount)
                 .chapterOutlines(new ArrayList<>())
                 .build();
     }

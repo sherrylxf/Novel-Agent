@@ -33,6 +33,26 @@ public class StoryProgress {
     private Integer plannedTotalChapters;
 
     /**
+     * Target total words requested by the user.
+     */
+    private Integer targetWordCount;
+
+    /**
+     * Approximate generated words after the current chapter.
+     */
+    private Integer generatedWordCount;
+
+    /**
+     * Remaining chapters after the current chapter.
+     */
+    private Integer remainingChapters;
+
+    /**
+     * Remaining words after the current chapter.
+     */
+    private Integer remainingWordCount;
+
+    /**
      * 尚未回收/解决的伏笔描述列表
      */
     private List<String> unresolvedForeshadowings;

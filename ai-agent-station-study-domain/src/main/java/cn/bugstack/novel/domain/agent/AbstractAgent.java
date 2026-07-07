@@ -1,6 +1,7 @@
 package cn.bugstack.novel.domain.agent;
 
 import cn.bugstack.novel.domain.model.entity.NovelContext;
+import cn.bugstack.novel.domain.service.llm.LLMExecutionContext;
 import cn.bugstack.novel.types.enums.AgentType;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,23 +21,23 @@ public abstract class AbstractAgent<T, R> implements IAgent<T, R> {
     @Override
     public R execute(T input, NovelContext context) {
         log.info("[{}] 开始执行，输入: {}", getName(), input);
-        
+
+        LLMExecutionContext.enter(context, getType());
         try {
-            // 执行前校验
             validateBeforeExecute(input, context);
-            
-            // 执行Agent逻辑
+
             R result = doExecute(input, context);
-            
-            // 执行后处理
+
             afterExecute(result, context);
-            
+
             log.info("[{}] 执行完成，结果: {}", getName(), result);
             return result;
-            
+
         } catch (Exception e) {
             log.error("[{}] 执行失败", getName(), e);
             throw new RuntimeException("Agent执行失败: " + getName(), e);
+        } finally {
+            LLMExecutionContext.clear();
         }
     }
     

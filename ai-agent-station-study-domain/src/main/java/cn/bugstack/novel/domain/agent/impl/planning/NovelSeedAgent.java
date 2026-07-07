@@ -168,17 +168,28 @@ public class NovelSeedAgent extends AbstractAgent<String, NovelSeed> {
     }
     
     private NovelGenre parseGenre(String genreStr) {
-        // 简化处理，实际应该更智能
+        if (genreStr.contains("科幻")) {
+            return NovelGenre.SCI_FI;
+        }
+        if (genreStr.contains("古言")) {
+            return NovelGenre.ANCIENT_ROMANCE;
+        }
+        if (genreStr.contains("现代") && !genreStr.contains("重生")) {
+            return NovelGenre.MODERN_URBAN;
+        }
         if (genreStr.contains("修仙")) {
             return NovelGenre.CULTIVATION;
-        } else if (genreStr.contains("历史")) {
+        }
+        if (genreStr.contains("历史")) {
             return NovelGenre.HISTORICAL_TRANSMIGRATION;
-        } else if (genreStr.contains("都市")) {
+        }
+        if (genreStr.contains("都市")) {
             return NovelGenre.URBAN_REBIRTH;
-        } else if (genreStr.contains("言情")) {
+        }
+        if (genreStr.contains("言情")) {
             return NovelGenre.ROMANCE;
         }
-        return NovelGenre.CULTIVATION; // 默认
+        return NovelGenre.CULTIVATION;
     }
     
     private String generateTitle(String genre, String conflict) {

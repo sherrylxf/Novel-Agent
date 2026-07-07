@@ -1,5 +1,6 @@
+# 【已废弃，仅供参考】业务表已迁入 PostgreSQL，请以 docs/dev-ops/pgvector/init.sql 为准。
 # ************************************************************
-# Novel Agent 数据库表设计
+# Novel Agent 数据库表设计（历史 MySQL 脚本）
 # 版本号： 1.0
 # 生成时间: 2025-01-15
 # ************************************************************
@@ -156,3 +157,21 @@ CREATE TABLE `novel_agent_config` (
   KEY `idx_novel_agent` (`novel_id`, `agent_type`),
   KEY `idx_agent_type` (`agent_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Novel Agent配置表';
+
+# 转储表 novel_pipeline_checkpoint（Pipeline 编排末次状态，可选；应用项 novel.pipeline.checkpoint.enabled）
+# ------------------------------------------------------------
+
+DROP TABLE IF EXISTS `novel_pipeline_checkpoint`;
+
+CREATE TABLE `novel_pipeline_checkpoint` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `novel_id` varchar(64) NOT NULL COMMENT '小说ID',
+  `session_id` varchar(128) DEFAULT NULL COMMENT 'SSE/会话ID',
+  `current_stage` varchar(64) DEFAULT NULL COMMENT '业务阶段名',
+  `pipeline_execution_state` varchar(32) DEFAULT NULL COMMENT '生命周期状态枚举名',
+  `last_failure_message` text COMMENT '最近失败说明',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_novel_pipeline_checkpoint_novel` (`novel_id`),
+  KEY `idx_npc_state` (`pipeline_execution_state`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='小说生成Pipeline检查点';

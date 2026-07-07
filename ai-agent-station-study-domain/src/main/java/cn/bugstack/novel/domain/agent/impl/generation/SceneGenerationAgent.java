@@ -12,9 +12,14 @@ import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
 import cn.bugstack.novel.domain.service.kg.KgStorySyncUtil;
 import cn.bugstack.novel.domain.service.rag.IRAGService;
 import cn.bugstack.novel.domain.service.rag.StoryContextBuilderService;
+import cn.bugstack.novel.domain.service.prompt.ScenePromptOptions;
+import cn.bugstack.novel.domain.service.prompt.SceneStructuredPrompt;
+import cn.bugstack.novel.domain.service.prompt.SceneStructuredPromptBuilder;
 import cn.bugstack.novel.domain.service.rag.StoryMemoryDocumentUtil;
 import cn.bugstack.novel.domain.service.rag.StoryQueryBuilderService;
+import cn.bugstack.novel.domain.service.rag.StoryRetrievalQueryRewriter;
 import cn.bugstack.novel.domain.service.llm.ILLMClient;
+import cn.bugstack.novel.domain.service.novel.INovelWorkspaceService;
 import cn.bugstack.novel.domain.service.plot.IPlotTrackerService;
 import cn.bugstack.novel.types.enums.AgentType;
 import lombok.extern.slf4j.Slf4j;
@@ -47,14 +52,17 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
     private final ILLMClient llmClient;
     private final StoryQueryBuilderService queryBuilderService;
     private final StoryContextBuilderService contextBuilderService;
+    private final INovelWorkspaceService novelWorkspaceService;
+
+    private final ScenePromptOptions scenePromptOptions;
     
     @Autowired
     public SceneGenerationAgent(IRAGService ragService, ILLMClient llmClient) {
-        this(ragService, null, null, llmClient, null, null);
+        this(ragService, null, null, llmClient, null, null, null, null);
     }
 
     public SceneGenerationAgent(IRAGService ragService, IKnowledgeGraphService knowledgeGraphService, IPlotTrackerService plotTrackerService, ILLMClient llmClient) {
-        this(ragService, knowledgeGraphService, plotTrackerService, llmClient, null, null);
+        this(ragService, knowledgeGraphService, plotTrackerService, llmClient, null, null, null, null);
     }
 
     public SceneGenerationAgent(IRAGService ragService,
@@ -62,7 +70,20 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
                                 IPlotTrackerService plotTrackerService,
                                 ILLMClient llmClient,
                                 StoryQueryBuilderService queryBuilderService,
-                                StoryContextBuilderService contextBuilderService) {
+                                StoryContextBuilderService contextBuilderService,
+                                INovelWorkspaceService novelWorkspaceService) {
+        this(ragService, knowledgeGraphService, plotTrackerService, llmClient,
+                queryBuilderService, contextBuilderService, novelWorkspaceService, null);
+    }
+
+    public SceneGenerationAgent(IRAGService ragService,
+                                IKnowledgeGraphService knowledgeGraphService,
+                                IPlotTrackerService plotTrackerService,
+                                ILLMClient llmClient,
+                                StoryQueryBuilderService queryBuilderService,
+                                StoryContextBuilderService contextBuilderService,
+                                INovelWorkspaceService novelWorkspaceService,
+                                ScenePromptOptions scenePromptOptions) {
         super(AgentType.SCENE_GENERATION);
         this.ragService = ragService;
         this.knowledgeGraphService = knowledgeGraphService;
@@ -70,6 +91,8 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
         this.llmClient = llmClient;
         this.queryBuilderService = queryBuilderService;
         this.contextBuilderService = contextBuilderService;
+        this.novelWorkspaceService = novelWorkspaceService;
+        this.scenePromptOptions = scenePromptOptions != null ? scenePromptOptions : ScenePromptOptions.defaults();
     }
     
     @Override
@@ -98,7 +121,8 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
                 context.setAttribute("latestStoryContextBundle", contextBundle);
             }
 
-            String content = generateContent(outline, contextBundle);
+            String previousChapterEnding = resolvePreviousChapterEnding(outline, context);
+            String content = generateContent(outline, contextBundle, previousChapterEnding, context);
             
             // 提取场景类型和地点
             String sceneType = extractSceneType(content);
@@ -126,38 +150,39 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
     }
     
     /**
-     * 调用LLM生成场景正文（3000字左右）
+     * 获取上一章末尾，用于前后章衔接
      */
-    private String generateContent(ChapterOutline outline, StoryContextBundle contextBundle) {
+    private String resolvePreviousChapterEnding(ChapterOutline outline, NovelContext context) {
+        if (novelWorkspaceService == null || outline == null || outline.getChapterNumber() == null || outline.getChapterNumber() <= 1) {
+            return "";
+        }
+        String novelId = context != null ? context.getNovelId() : null;
+        if (novelId == null || novelId.isBlank()) {
+            return "";
+        }
+        VolumePlan volumePlan = context != null ? context.getAttribute("currentVolume") : null;
+        Integer volumeNumber = volumePlan != null ? volumePlan.getVolumeNumber() : 1;
+        return novelWorkspaceService.getPreviousChapterEnding(novelId, volumeNumber, outline.getChapterNumber());
+    }
+
+    /**
+     * 调用LLM生成场景正文（结构化 Prompt：全局设定 / 记忆 / RAG / 指令 / 规则 / Few-Shot）
+     */
+    private String generateContent(ChapterOutline outline, StoryContextBundle contextBundle, String previousChapterEnding, NovelContext context) {
         if (llmClient == null) {
             return generateFallbackContent(outline);
         }
-        
+
         try {
-            String systemPrompt = "你是一个专业的小说创作助手。根据章节梗概生成详细的场景正文。" +
-                    "要求：1. 字数约3000字；2. 文笔流畅，情节生动；3. 严格遵守人物设定、世界规则和剧情线程；4. 优先参考结构化上下文，不直接复述历史文本。";
-            
-            String template = "章节标题：{chapterTitle}\n" +
-                    "章节梗概：{outline}\n" +
-                    "关键人物：{keyCharacters}\n" +
-                    "关键事件：{keyEvents}\n" +
-                    "{historyBackground}\n" +
-                    "{characterMemory}\n" +
-                    "{activeThreads}\n\n" +
-                    "请根据以上信息生成详细的场景正文（约3000字），要求文笔流畅，情节生动，符合章节梗概，并确保前后设定一致。";
-            
-            Map<String, Object> variables = new HashMap<>();
-            variables.put("chapterTitle", outline.getChapterTitle());
-            variables.put("outline", outline.getOutline());
-            variables.put("keyCharacters", outline.getKeyCharacters() != null ? 
-                    String.join("、", outline.getKeyCharacters()) : "");
-            variables.put("keyEvents", outline.getKeyEvents() != null ? 
-                    String.join("、", outline.getKeyEvents()) : "");
-            variables.put("historyBackground", contextBundle != null ? contextBundle.getHistoryBackground() : "");
-            variables.put("characterMemory", contextBundle != null ? contextBundle.getCharacterMemory() : "");
-            variables.put("activeThreads", contextBundle != null ? contextBundle.getActiveThreads() : "");
-            
-            String content = llmClient.callWithTemplate(systemPrompt, template, variables);
+            int targetWords = 3000;
+            if (context != null) {
+                Integer wpc = context.getAttribute("wordsPerChapter");
+                if (wpc != null && wpc > 0) targetWords = wpc;
+            }
+            SceneStructuredPrompt structured = SceneStructuredPromptBuilder.build(
+                    outline, contextBundle, previousChapterEnding, context, targetWords, scenePromptOptions);
+            String content = llmClient.callWithTemplate(structured.systemPrompt(), structured.userTemplate(), structured.variables());
+            content = stripMarkdownHeaders(content);
             
             // 确保字数在合理范围内（2000-4000字）
             if (content.length() < 2000) {
@@ -181,7 +206,7 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
         }
         return StoryRetrievalQuery.builder()
                 .novelId(context != null ? context.getNovelId() : null)
-                .queryText(StoryMemoryDocumentUtil.buildSearchQuery(outline))
+                .queryText(StoryRetrievalQueryRewriter.rewriteForSceneRetrieval(outline, context, knowledgeSnapshot))
                 .memoryTypes(new ArrayList<>(List.of("chapter_summary", "scene_summary", "scene_fulltext")))
                 .chapterTo(outline != null ? outline.getChapterNumber() : null)
                 .topK(3)
@@ -304,6 +329,28 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
     }
     
     /**
+     * 去除 Markdown 标题，输出纯正文格式（符合网文与 TXT 导出）
+     */
+    private String stripMarkdownHeaders(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : content.split("\n")) {
+            String trimmed = line.trim();
+            // 去除 # 第一章：xxx、## 一、xxx、## 二、xxx 等 Markdown 标题行
+            if (trimmed.matches("^#+\\s*第[一二三四五六七八九十百千\\d]+章[：:].*")) {
+                continue;
+            }
+            if (trimmed.matches("^#+\\s*[一二三四五六七八九十百千\\d]+[、.．].*")) {
+                continue;
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString().trim();
+    }
+    
+    /**
      * 生成补充内容
      */
     private String generateAdditionalContent(ChapterOutline outline) {
@@ -407,13 +454,13 @@ public class SceneGenerationAgent extends AbstractAgent<ChapterOutline, Scene> {
     }
     
     /**
-     * 降级策略：生成基础内容
+     * 降级策略：LLM 调用失败时的占位内容（需检查 API 配置与网络）
      */
     private String generateFallbackContent(ChapterOutline outline) {
-        return String.format("【这是模拟生成的场景正文，实际应该调用LLM生成】\n\n" +
-                "%s\n\n" +
-                "根据章节梗概：%s\n" +
-                "本章主要讲述了主角的成长历程，通过努力克服困难，最终获得突破。",
+        return String.format("【LLM 调用失败，此处为降级占位内容，请检查 API 配置与网络】\n\n" +
+                "章节标题：%s\n\n" +
+                "章节梗概：%s\n\n" +
+                "本章将根据上述梗概展开情节。若需真实正文，请确保 LLM 服务可用后重新生成。",
                 outline.getChapterTitle(),
                 outline.getOutline());
     }

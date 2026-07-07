@@ -12,7 +12,7 @@ AI 小说创作 Agent 服务：支持小说规划、章节生成、知识图谱�
 | **知识图谱** | 按小说维护人物、伏笔等节点与关系；提供图谱数据接口（`/api/kg/graph`），支持人物/伏笔的增删改查，供前端可视化。 |
 | **RAG 文档库** | 按小说/章节、记忆类型等筛选文档；语义检索（可带人物、地点、剧情线等过滤）；检索结果与 explain 分数；文档删除等。 |
 
-**技术栈：** Spring Boot、Spring AI（OpenAI 兼容）、MySQL、PostgreSQL（pgvector）、Neo4j；LLM 支持 DeepSeek / OpenAI / 通义千问等。
+**技术栈：** Spring Boot、Spring AI（OpenAI 兼容）、PostgreSQL（pgvector，业务与向量同库）、Neo4j；LLM 支持 DeepSeek / OpenAI / 通义千问等。
 
 ---
 
@@ -20,8 +20,7 @@ AI 小说创作 Agent 服务：支持小说规划、章节生成、知识图谱�
 
 - **JDK** 17+
 - **Maven** 3.6+
-- **MySQL** 8.0+（业务库）
-- **PostgreSQL** 14+（可选，pgvector 向量库）
+- **PostgreSQL** 14+（pgvector；业务数据与向量 RAG 同一数据库）
 - **Neo4j** 5.0+（可选，知识图谱）
 - **LLM API**：DeepSeek / OpenAI / 通义千问等（兼容 OpenAI API 格式）
 
@@ -56,8 +55,9 @@ cd novel-agent
 cp .env.example .env
 
 # 编辑 .env，填写你自己的配置，例如 DeepSeek：
-# OPENAI_API_KEY=sk-xxxxxxxx   # 你的 DeepSeek/OpenAI Key
-# OPENAI_BASE_URL=https://api.deepseek.com
+# DeepSeek（默认）
+OPENAI_API_KEY=sk-45e14e100bee45b9b935e65fca433e26
+OPENAI_BASE_URL=https://api.deepseek.com
 ```
 
 **.env.example 中仅为占位符，不含任何真实 Key。**
@@ -70,7 +70,7 @@ cp .env.example .env
 | `OPENAI_BASE_URL` | API 地址 | DeepSeek: `https://api.deepseek.com` |
 | `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` | 向量模型（RAG） | 本地 Ollama 可用 `ollama` + `http://localhost:11434/v1` |
 
-数据库等更多配置见 `ai-agent-station-study-app/src/main/resources/application-dev.yml`（MySQL/PostgreSQL/Neo4j 地址、账号等）。生产环境建议用环境变量覆盖，勿在配置文件中写真实密码。
+数据库等更多配置见 `ai-agent-station-study-app/src/main/resources/application-dev.yml`（PostgreSQL/Neo4j 等）。生产环境建议用环境变量覆盖，勿在配置文件中写真实密码。
 
 **详情见 docs/dev-ops**
 

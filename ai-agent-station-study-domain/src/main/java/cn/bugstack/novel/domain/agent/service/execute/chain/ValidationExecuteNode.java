@@ -9,8 +9,11 @@ import cn.bugstack.novel.domain.model.entity.Scene;
 import cn.bugstack.novel.domain.model.entity.StoryEndingDecision;
 import cn.bugstack.novel.domain.model.entity.StoryProgress;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
+import cn.bugstack.novel.domain.model.valobj.NovelContextKeys;
+import cn.bugstack.novel.domain.model.valobj.VolumeCompletionSummary;
 import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
 import cn.bugstack.novel.domain.service.plot.IPlotTrackerService;
+import cn.bugstack.novel.domain.service.plot.StoryPacingPolicy;
 
 import java.util.List;
 import cn.bugstack.novel.types.enums.GenerationStage;
@@ -58,7 +61,8 @@ public class ValidationExecuteNode extends AbstractExecuteSupport {
             context.setCurrentStage(GenerationStage.COMPLETE.name());
             return null;
         }
-        
+        accumulateWordCount(context, scene);
+
         try {
             // 一致性校验
             IAgent<Scene, Boolean> consistencyAgent = orchestrator.getAgent("ConsistencyGuardAgent");
@@ -112,6 +116,7 @@ public class ValidationExecuteNode extends AbstractExecuteSupport {
             StoryEndingDecision decision = endingAgent.execute(progress, context);
             if (decision.isShouldEndStory()) {
                 log.info("EndingAgent: shouldEndStory=true, reason={}", decision.getReason());
+                recordVolumeCompletion(context, true, decision.getReason());
                 try {
                     if (knowledgeGraphService != null) {
                         List<String> toResolve = knowledgeGraphService.listUnresolvedForeshadowingIds(context.getNovelId());
@@ -126,23 +131,28 @@ public class ValidationExecuteNode extends AbstractExecuteSupport {
                 return null;
             }
             // 计算下一章/下一卷
+            VolumePlan currentVolume = context.getAttribute("currentVolume");
             Integer currentVolumeNumber = context.getAttribute("currentVolumeNumber");
             Integer currentChapterInVolume = context.getAttribute("currentChapterInVolume");
             if (currentVolumeNumber == null) currentVolumeNumber = 1;
             if (currentChapterInVolume == null) currentChapterInVolume = 1;
-            VolumePlan currentVolume = context.getAttribute("currentVolume");
-            int chapterCount = currentVolume != null && currentVolume.getChapterCount() != null ? currentVolume.getChapterCount() : 20;
+            int chapterCount = currentVolume != null && currentVolume.getChapterCount() != null
+                    ? currentVolume.getChapterCount()
+                    : (plan != null && plan.getChaptersPerVolume() != null ? plan.getChaptersPerVolume() : 20);
             int totalVolumes = plan != null && plan.getTotalVolumes() != null ? plan.getTotalVolumes() : 1;
             if (currentChapterInVolume < chapterCount) {
                 context.setAttribute("currentChapterInVolume", currentChapterInVolume + 1);
                 return chapterExecuteNode;
             }
             if (currentVolumeNumber < totalVolumes) {
+                recordVolumeCompletion(context, false, null);
                 context.setAttribute("currentVolumeNumber", currentVolumeNumber + 1);
                 context.setAttribute("currentChapterInVolume", 1);
+                resetVolumeWordCount(context);
                 return volumeExecuteNode;
             }
             log.info("已到规划最后一章/卷，流程结束");
+            recordVolumeCompletion(context, true, "已到规划最后一卷最后一章");
             return null;
         } catch (Exception e) {
             log.warn("结局判定异常，默认结束本流程", e);
@@ -153,6 +163,86 @@ public class ValidationExecuteNode extends AbstractExecuteSupport {
     @Override
     public AbstractExecuteSupport getNext(NovelContext context) {
         return null;
+    }
+
+    private void accumulateWordCount(NovelContext context, Scene scene) {
+        if (context == null || scene == null) {
+            return;
+        }
+        Integer currentChapterInVolume = context.getAttribute("currentChapterInVolume");
+        Integer countedChapterInVolume = context.getAttribute("countedChapterInVolume");
+        Integer currentVolumeNumber = context.getAttribute("currentVolumeNumber");
+        Integer countedVolumeNumber = context.getAttribute("countedVolumeNumber");
+        if (currentChapterInVolume != null && currentChapterInVolume.equals(countedChapterInVolume)
+                && currentVolumeNumber != null && currentVolumeNumber.equals(countedVolumeNumber)) {
+            return;
+        }
+        Integer accumulated = context.getAttribute("accumulatedWordCount");
+        if (accumulated == null) {
+            accumulated = 0;
+        }
+        int sceneWords = scene.getWordCount() != null ? scene.getWordCount() : 0;
+        if (sceneWords <= 0 && scene.getContent() != null) {
+            sceneWords = scene.getContent().length();
+        }
+        context.setAttribute("accumulatedWordCount", accumulated + Math.max(0, sceneWords));
+        accumulateVolumeWordCount(context, currentVolumeNumber, sceneWords);
+        context.setAttribute("countedChapterInVolume", currentChapterInVolume);
+        context.setAttribute("countedVolumeNumber", currentVolumeNumber);
+    }
+
+    private void accumulateVolumeWordCount(NovelContext context, Integer currentVolumeNumber, int sceneWords) {
+        if (context == null || currentVolumeNumber == null) {
+            return;
+        }
+        Integer trackedVolume = context.getAttribute("volumeWordCountVolume");
+        Integer volumeWords = context.getAttribute("currentVolumeWordCount");
+        if (volumeWords == null || !currentVolumeNumber.equals(trackedVolume)) {
+            volumeWords = 0;
+        }
+        context.setAttribute("currentVolumeWordCount", volumeWords + Math.max(0, sceneWords));
+        context.setAttribute("volumeWordCountVolume", currentVolumeNumber);
+    }
+
+    private void resetVolumeWordCount(NovelContext context) {
+        if (context == null) {
+            return;
+        }
+        context.setAttribute("currentVolumeWordCount", 0);
+        context.removeAttribute("volumeWordCountVolume");
+    }
+
+    private void recordVolumeCompletion(NovelContext context, boolean shouldEndStory, String endingHint) {
+        if (context == null) {
+            return;
+        }
+        VolumePlan volume = context.getAttribute("currentVolume");
+        Integer volumeNumber = context.getAttribute("currentVolumeNumber");
+        Integer volumeWords = context.getAttribute("currentVolumeWordCount");
+        Integer bookWords = context.getAttribute("accumulatedWordCount");
+        int volumeTarget = StoryPacingPolicy.resolveVolumeTargetWordCount(context);
+        int bookTarget = StoryPacingPolicy.resolveTargetWordCount(context, null);
+        int tolerance = StoryPacingPolicy.resolveWordCountTolerance(context);
+
+        boolean volumeOk = volumeTarget <= 0 || volumeWords == null
+                || Math.abs(volumeWords - volumeTarget) <= tolerance;
+        boolean bookOk = bookTarget <= 0 || bookWords == null
+                || (bookWords >= bookTarget - tolerance && bookWords <= bookTarget + tolerance);
+
+        VolumeCompletionSummary summary = VolumeCompletionSummary.builder()
+                .volumeNumber(volumeNumber)
+                .volumeTitle(volume != null ? volume.getVolumeTitle() : null)
+                .volumeWordCount(volumeWords)
+                .volumeTargetWordCount(volumeTarget > 0 ? volumeTarget : null)
+                .bookWordCount(bookWords)
+                .bookTargetWordCount(bookTarget > 0 ? bookTarget : null)
+                .wordCountTolerance(tolerance)
+                .volumeWithinTolerance(volumeOk)
+                .bookWithinTolerance(bookOk)
+                .shouldEndStory(shouldEndStory)
+                .endingHint(endingHint)
+                .build();
+        context.setAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION, summary);
     }
     
 }

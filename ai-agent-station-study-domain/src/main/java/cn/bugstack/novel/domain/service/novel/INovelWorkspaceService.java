@@ -15,6 +15,11 @@ public interface INovelWorkspaceService {
 
     List<NovelProject> queryNovelProjects();
 
+    /**
+     * 查询所有小说（含已归档），用于阅读页
+     */
+    List<NovelProject> queryAllNovelProjects();
+
     NovelProject queryNovelProject(String novelId);
 
     void archiveNovel(String novelId);
@@ -28,6 +33,15 @@ public interface INovelWorkspaceService {
     List<ChapterDetail> queryChapters(String novelId);
 
     ChapterDetail queryChapterDetail(String chapterId);
+
+    /**
+     * 获取上一章正文末尾（用于新章与前一章衔接）
+     * @param novelId 小说ID
+     * @param volumeNumber 卷号
+     * @param currentChapterNumber 当前章节号（将取 currentChapterNumber-1 的末尾）
+     * @return 上一章末尾约800字，若无则返回空字符串
+     */
+    String getPreviousChapterEnding(String novelId, Integer volumeNumber, Integer currentChapterNumber);
 
     ChapterDetail saveOrUpdateChapter(ChapterDetail chapterDetail);
 

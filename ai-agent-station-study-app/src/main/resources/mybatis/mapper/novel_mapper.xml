@@ -39,6 +39,12 @@
         ORDER BY update_time DESC, create_time DESC
     </select>
 
+    <select id="queryAllNovels" resultMap="NovelMap">
+        SELECT id, novel_id, title, genre, status, create_time, update_time
+        FROM novel
+        ORDER BY update_time DESC, create_time DESC
+    </select>
+
     <select id="queryByGenre" parameterType="java.lang.String" resultMap="NovelMap">
         SELECT id, novel_id, title, genre, status, create_time, update_time
         FROM novel

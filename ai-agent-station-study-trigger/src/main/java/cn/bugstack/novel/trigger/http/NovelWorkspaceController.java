@@ -30,11 +30,14 @@ public class NovelWorkspaceController {
     private INovelWorkspaceService novelWorkspaceService;
 
     @GetMapping("/novels")
-    public Map<String, Object> queryNovels() {
+    public Map<String, Object> queryNovels(@RequestParam(value = "includeArchived", defaultValue = "false") boolean includeArchived) {
         Map<String, Object> result = new HashMap<>();
         try {
+            List<NovelProject> list = includeArchived
+                    ? novelWorkspaceService.queryAllNovelProjects()
+                    : novelWorkspaceService.queryNovelProjects();
             result.put("success", true);
-            result.put("data", novelWorkspaceService.queryNovelProjects().stream()
+            result.put("data", list.stream()
                     .map(this::toNovelDTO)
                     .collect(Collectors.toList()));
         } catch (Exception e) {

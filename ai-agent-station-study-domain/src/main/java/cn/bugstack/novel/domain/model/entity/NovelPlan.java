@@ -36,7 +36,12 @@ public class NovelPlan {
      * 每卷章节数
      */
     private Integer chaptersPerVolume;
-    
+
+    /**
+     * 总章节数（一键整本时由用户指定，用于最后一卷章节数计算）
+     */
+    private Integer totalChapters;
+
     /**
      * 卷规划列表
      */

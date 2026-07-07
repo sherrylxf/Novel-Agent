@@ -1,32 +1,26 @@
 spring:
   application:
     name: novel-agent
+
+  # Redis（Docker Compose 服务名 redis；本地可覆盖为 host.docker.internal 或 localhost）
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
   
-  # MySQL数据源配置（业务数据）
+  # PostgreSQL：业务表 + pgvector（单一连接，服务名 postgresql）
   datasource:
-    mysql:
-      driver-class-name: com.mysql.cj.jdbc.Driver
-      url: ${SPRING_DATASOURCE_MYSQL_URL:jdbc:mysql://mysql:3306/novel_agent?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=false}
-      username: ${SPRING_DATASOURCE_MYSQL_USERNAME:root}
-      password: ${SPRING_DATASOURCE_MYSQL_PASSWORD:123456}
+    postgresql:
+      driver-class-name: org.postgresql.Driver
+      url: ${SPRING_DATASOURCE_POSTGRESQL_URL:jdbc:postgresql://postgresql:5432/novel_vector}
+      username: ${SPRING_DATASOURCE_POSTGRESQL_USERNAME:postgres}
+      password: ${SPRING_DATASOURCE_POSTGRESQL_PASSWORD:postgres}
       hikari:
-        maximum-pool-size: 10
+        maximum-pool-size: 15
         minimum-idle: 5
         idle-timeout: 30000
         connection-timeout: 30000
         max-lifetime: 1800000
-    
-    # PostgreSQL数据源配置（向量数据库）
-    pgvector:
-      driver-class-name: org.postgresql.Driver
-      url: ${SPRING_DATASOURCE_PGVECTOR_URL:jdbc:postgresql://postgresql:5432/novel_vector}
-      username: ${SPRING_DATASOURCE_PGVECTOR_USERNAME:postgres}
-      password: ${SPRING_DATASOURCE_PGVECTOR_PASSWORD:postgres}
-      hikari:
-        maximum-pool-size: 5
-        minimum-idle: 2
-        idle-timeout: 30000
-        connection-timeout: 30000
   
   # Neo4j配置（知识图谱）
   neo4j:
@@ -35,15 +29,20 @@ spring:
       username: ${SPRING_NEO4J_AUTHENTICATION_USERNAME:neo4j}
       password: ${SPRING_NEO4J_AUTHENTICATION_PASSWORD:password}
   
-  # AI配置（LLM API - 调用外部API，不使用本地模型）
+  # AI配置（LLM API - 使用 DeepSeek）
   ai:
     openai:
       # ========== Chat API 配置（用于文本生成）==========
-      api-key: ${SPRING_AI_OPENAI_API_KEY:your-api-key}
-      base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.openai.com}
+      api-key: ${SPRING_AI_OPENAI_API_KEY:sk-45e14e100bee45b9b935e65fca433e26}
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.deepseek.com}
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.7
+          max-tokens: 4096
       # 支持的API提供商：
+      # - DeepSeek: https://api.deepseek.com（默认）
       # - OpenAI: https://api.openai.com
-      # - DeepSeek: https://api.deepseek.com
       # - Qwen: https://dashscope.aliyuncs.com/compatible-mode/v1
       # - 其他兼容OpenAI API的提供商
       

@@ -1,16 +1,25 @@
 package cn.bugstack.novel.domain.agent.service.execute;
 
+import cn.bugstack.novel.domain.agent.pipeline.IGenerationPipelineHandler;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 执行支撑抽象类
- * 参考课程第3-10、11节：执行链路设计
- * 使用责任链模式实现执行链路
+ * 执行支撑抽象类：责任链节点骨架。
+ * <p>
+ * 子类在 {@link #doExecute} 中完成 prompt 构建、调用 {@link cn.bugstack.novel.domain.agent.IAgent}、
+ * 校验、落库等，并 <strong>return 下一节点</strong> 完成链的串联。
+ * {@link #setNextHandler} 仅在 {@link #executeStageStep} 路径生效；一次性 {@link #execute} 仍以 {@code doExecute} 返回值递归。
  */
 @Slf4j
-public abstract class AbstractExecuteSupport {
-    
+public abstract class AbstractExecuteSupport implements IGenerationPipelineHandler {
+
+    /**
+     * 可选：覆盖 {@link #doExecute} 返回的下一跳（测试桩、A/B 或动态插阶段）。
+     * 生产路径通常不设置，由子类 {@code return} 下一节点即可。
+     */
+    private volatile IGenerationPipelineHandler nextHandlerOverride;
+
     /**
      * 执行当前节点逻辑
      *
@@ -26,6 +35,26 @@ public abstract class AbstractExecuteSupport {
      * @return 下一个节点
      */
     public abstract AbstractExecuteSupport getNext(NovelContext context);
+
+    @Override
+    public String handlerName() {
+        return getClass().getSimpleName();
+    }
+
+    @Override
+    public void setNextHandler(IGenerationPipelineHandler next) {
+        this.nextHandlerOverride = next;
+    }
+
+    @Override
+    public IGenerationPipelineHandler executeStageStep(NovelContext context) {
+        AbstractExecuteSupport computed = executeStep(context);
+        IGenerationPipelineHandler override = nextHandlerOverride;
+        if (override != null) {
+            return override;
+        }
+        return computed;
+    }
     
     /**
      * 执行节点（责任链入口）

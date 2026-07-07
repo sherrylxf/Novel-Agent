@@ -5,6 +5,7 @@ import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.StoryEndingDecision;
 import cn.bugstack.novel.domain.model.entity.StoryProgress;
 import cn.bugstack.novel.domain.service.llm.ILLMClient;
+import cn.bugstack.novel.domain.service.plot.StoryPacingPolicy;
 import cn.bugstack.novel.types.enums.AgentType;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -34,6 +35,10 @@ public class EndingAgent extends AbstractAgent<StoryProgress, StoryEndingDecisio
         log.info("结局判定：当前章节 {}, 规划总章节 {}", progress.getCurrentChapterNumber(), progress.getPlannedTotalChapters());
 
         try {
+            StoryEndingDecision forcedDecision = forceFinishAtBudget(progress);
+            if (forcedDecision != null) {
+                return forcedDecision;
+            }
             if (llmClient == null) {
                 log.warn("未配置 ILLMClient，使用启发式降级策略进行结局判定");
                 return heuristicDecision(progress);
@@ -165,6 +170,45 @@ public class EndingAgent extends AbstractAgent<StoryProgress, StoryEndingDecisio
                 .reason(reason.toString())
                 .confidence(0.4d)
                 .build();
+    }
+
+    /**
+     * 字数预算触顶时强制收束，避免超出用户约定的总字数（如 50 万 ±1 万）。
+     */
+    private StoryEndingDecision forceFinishAtBudget(StoryProgress progress) {
+        Integer target = progress.getTargetWordCount();
+        Integer generated = progress.getGeneratedWordCount();
+        if (target == null || target <= 0 || generated == null || generated <= 0) {
+            return null;
+        }
+        int tolerance = StoryPacingPolicy.DEFAULT_WORD_COUNT_TOLERANCE;
+        int lowerBound = Math.max(0, target - tolerance);
+        int upperBound = target + tolerance;
+
+        if (generated >= upperBound) {
+            return StoryEndingDecision.builder()
+                    .shouldEndStory(true)
+                    .reason(String.format("已生成 %d 字，达到上限 %d 字（目标 %d ±%d）",
+                            generated, upperBound, target, tolerance))
+                    .confidence(0.95d)
+                    .build();
+        }
+        if (generated >= target) {
+            return StoryEndingDecision.builder()
+                    .shouldEndStory(true)
+                    .reason(String.format("已生成 %d 字，达到目标 %d 字", generated, target))
+                    .confidence(0.9d)
+                    .build();
+        }
+        if (generated >= lowerBound && progress.getRemainingChapters() != null && progress.getRemainingChapters() <= 2) {
+            return StoryEndingDecision.builder()
+                    .shouldEndStory(true)
+                    .reason(String.format("已生成 %d 字，进入目标区间 [%d, %d]，且剩余章节不多，建议收束",
+                            generated, lowerBound, upperBound))
+                    .confidence(0.75d)
+                    .build();
+        }
+        return null;
     }
 
     /**

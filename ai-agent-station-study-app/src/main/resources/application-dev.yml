@@ -16,32 +16,25 @@ thread:
 spring:
   application:
     name: novel-agent
+
+  # 默认不启用 Redis（无本地 Redis 时仍可启动）。启用限流/RAG 缓存时请配置 spring.data.redis 并删除下列 exclude。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
   
-  # MySQL数据源配置（业务数据）
+  # PostgreSQL：业务表 + pgvector（Docker 映射端口 15432，库名 novel_vector）
   datasource:
-    mysql:
-      driver-class-name: com.mysql.cj.jdbc.Driver
-      url: jdbc:mysql://127.0.0.1:13306/novel_agent?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=false
-      username: root
-      password: 123456
-      hikari:
-        maximum-pool-size: 10
-        minimum-idle: 5
-        idle-timeout: 30000
-        connection-timeout: 30000
-        max-lifetime: 1800000
-    
-    # PostgreSQL数据源配置（向量数据库，可选）
-    pgvector:
+    postgresql:
       driver-class-name: org.postgresql.Driver
       url: jdbc:postgresql://127.0.0.1:15432/novel_vector
       username: postgres
       password: postgres
       hikari:
-        maximum-pool-size: 5
-        minimum-idle: 2
+        maximum-pool-size: 15
+        minimum-idle: 5
         idle-timeout: 30000
         connection-timeout: 30000
+        max-lifetime: 1800000
   
   # Neo4j配置（知识图谱，可选）
   neo4j:
@@ -55,8 +48,8 @@ spring:
   ai:
     openai:
       # ========== Chat API 配置（用于文本生成）==========
-      # DeepSeek / OpenAI 等：请通过环境变量 OPENAI_API_KEY 配置，切勿在配置文件中填写真实 Key
-      api-key: ${OPENAI_API_KEY:}
+      # DeepSeek API Key（dev 环境，勿提交到公共仓库）
+      api-key: sk-45e14e100bee45b9b935e65fca433e26
       base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
       chat:
         options:
@@ -125,6 +118,26 @@ spring:
   mybatis:
     mapper-locations: classpath:/mybatis/mapper/**/*.xml
     config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 小说生成流水线：阶段重试 + 检查点（与 application.yml 一致，此处可覆盖调优）
+novel:
+  pipeline:
+    checkpoint:
+      enabled: true
+    retry:
+      max-attempts: 6
+      initial-delay-ms: 400
+      max-delay-ms: 5000
+      multiplier: 2.0
+      jitter-ratio: 0.15
+  guard:
+    rate-per-minute: 30
+  llm:
+    http:
+      read-timeout: 300  # 读取超时（秒）
+      # 若直连 DeepSeek 频繁 Connection reset，可配置代理（需支持 HTTPS CONNECT）
+      # proxy-host: 127.0.0.1
+      # proxy-port: 7890
 
 # 日志
 logging:

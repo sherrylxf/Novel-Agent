@@ -4,31 +4,19 @@ spring:
   profiles:
     active: dev
   
-  # MySQL数据源配置（业务数据）- 必需
+  # PostgreSQL：业务表 + pgvector（单一库 novel_vector）
   datasource:
-    mysql:
-      driver-class-name: com.mysql.cj.jdbc.Driver
-      url: jdbc:mysql://127.0.0.1:3306/novel_agent?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=false
-      username: root
-      password: 123456
-      hikari:
-        maximum-pool-size: 10
-        minimum-idle: 5
-        idle-timeout: 30000
-        connection-timeout: 30000
-        max-lifetime: 1800000
-    
-    # PostgreSQL数据源配置（向量数据库）
-    pgvector:
+    postgresql:
       driver-class-name: org.postgresql.Driver
       url: jdbc:postgresql://127.0.0.1:15432/novel_vector
       username: postgres
       password: postgres
       hikari:
-        maximum-pool-size: 5
-        minimum-idle: 2
+        maximum-pool-size: 15
+        minimum-idle: 5
         idle-timeout: 30000
         connection-timeout: 30000
+        max-lifetime: 1800000
   
   # Neo4j配置（知识图谱）- 可选，如果暂时不使用知识图谱功能可以注释
   # neo4j:
@@ -47,6 +35,23 @@ spring:
   mybatis:
     mapper-locations: classpath:/mybatis/mapper/**/*.xml
     config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 小说生成流水线（阶段级指数退避重试 + 检查点落库断点恢复）
+novel:
+  # 场景生成「五层结构化 Prompt」与 Few-Shot（见 SceneStructuredPromptBuilder）
+  agent:
+    scene-prompt:
+      few-shot-enabled: true
+      max-few-shot-chars: 900
+  pipeline:
+    checkpoint:
+      enabled: true
+    retry:
+      max-attempts: 6
+      initial-delay-ms: 400
+      max-delay-ms: 5000
+      multiplier: 2.0
+      jitter-ratio: 0.15
 
 # 线程池配置
 thread:

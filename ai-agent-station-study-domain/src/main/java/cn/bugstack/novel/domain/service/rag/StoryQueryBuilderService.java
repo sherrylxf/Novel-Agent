@@ -51,7 +51,7 @@ public class StoryQueryBuilderService {
 
         return StoryRetrievalQuery.builder()
                 .novelId(context != null ? context.getNovelId() : null)
-                .queryText(StoryMemoryDocumentUtil.buildSearchQuery(outline))
+                .queryText(StoryRetrievalQueryRewriter.rewriteForSceneRetrieval(outline, context, knowledgeSnapshot))
                 .characters(new ArrayList<>(characters))
                 .locations(new ArrayList<>(locations))
                 .topics(new ArrayList<>(topics))

@@ -60,7 +60,7 @@ public class LocalChapterFileStore implements IChapterFileStore {
     private String buildText(String chapterTitle, String content) {
         StringBuilder sb = new StringBuilder();
         if (chapterTitle != null && !chapterTitle.isBlank()) {
-            sb.append("# ").append(chapterTitle.trim()).append("\n\n");
+            sb.append(chapterTitle.trim()).append("\n\n");
         }
         sb.append(content);
         if (!content.endsWith("\n")) {

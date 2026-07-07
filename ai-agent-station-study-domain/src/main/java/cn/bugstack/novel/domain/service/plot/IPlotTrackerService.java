@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * 剧情追踪服务（Plot Tracker）
  * 维护：伏笔、角色目标、剧情进度，为 EndingAgent 提供输入。
- * 组合 MySQL（规划/章节）与 Neo4j（伏笔）信息。
+ * 组合 PostgreSQL（规划/章节）与 Neo4j（伏笔）信息。
  */
 public interface IPlotTrackerService {
 

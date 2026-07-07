@@ -5,11 +5,17 @@ import cn.bugstack.novel.api.dto.NovelGenerateRequestDTO;
 import cn.bugstack.novel.api.dto.NovelGenerateResponseDTO;
 import cn.bugstack.novel.api.dto.NovelPlanSaveRequestDTO;
 import cn.bugstack.novel.domain.agent.orchestrator.NovelAgentOrchestrator;
+import cn.bugstack.novel.domain.agent.pipeline.PipelineCheckpointMergeMode;
 import cn.bugstack.novel.domain.agent.service.execute.ExecutionStateService;
+import cn.bugstack.novel.domain.model.entity.ChapterOutline;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.NovelPlan;
 import cn.bugstack.novel.domain.model.entity.NovelProject;
+import cn.bugstack.novel.domain.model.entity.Scene;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
+import cn.bugstack.novel.domain.model.valobj.NovelContextKeys;
+import cn.bugstack.novel.domain.model.valobj.VolumeCompletionSummary;
+import cn.bugstack.novel.domain.service.guard.INovelGenerationGuard;
 import cn.bugstack.novel.domain.service.novel.INovelContinuationService;
 import cn.bugstack.novel.domain.service.novel.INovelPlanService;
 import cn.bugstack.novel.domain.service.novel.INovelWorkspaceService;
@@ -19,6 +25,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
+
+import org.springframework.beans.factory.annotation.Autowired;
 
 import jakarta.annotation.Resource;
 import java.util.HashMap;
@@ -55,6 +63,9 @@ public class NovelController implements INovelAgentService {
 
     @Resource
     private INovelContinuationService novelContinuationService;
+
+    @Autowired(required = false)
+    private INovelGenerationGuard novelGenerationGuard;
     
     @Override
     @PostMapping("/generate")
@@ -67,6 +78,13 @@ public class NovelController implements INovelAgentService {
             response.setCharacterEncoding("UTF-8");
             response.setHeader("Cache-Control", "no-cache");
             response.setHeader("Connection", "keep-alive");
+
+            if (novelGenerationGuard != null && !novelGenerationGuard.tryAcquireGenerateRequest(request.getSessionId())) {
+                ResponseBodyEmitter denied = new ResponseBodyEmitter(Long.MAX_VALUE);
+                sendError(denied, request.getSessionId(), "请求过于频繁，请稍后再试");
+                denied.complete();
+                return denied;
+            }
             
             // 创建流式输出对象
             ResponseBodyEmitter emitter = new ResponseBodyEmitter(Long.MAX_VALUE);
@@ -80,19 +98,29 @@ public class NovelController implements INovelAgentService {
                     // 初始化或获取上下文
                     NovelContext context = executionStateService.getContext(request.getSessionId());
                     if (context == null) {
-                        // 首次调用，初始化上下文
                         context = orchestrator.initializeContext(
                                 request.getGenre(),
                                 request.getCoreConflict(),
                                 request.getWorldSetting(),
                                 request.getNovelId(),
-                                request.getTargetWordCount()
+                                request.getTargetWordCount(),
+                                request.getChaptersTotal(),
+                                request.getWordsPerChapter()
                         );
+                        orchestrator.mergePersistedCheckpoint(context, PipelineCheckpointMergeMode.FRESH_SESSION);
                         executionStateService.saveContext(request.getSessionId(), context);
                     }
-                    
-                    // 执行第一步（从当前阶段开始）
-                    executeStepByStep(emitter, request.getSessionId(), context, request.getMaxStep());
+                    attachPipelineSession(context, request.getSessionId());
+                    applyGenerationRequestToContext(context, request);
+
+                    String generateMode = request.getGenerateMode();
+                    if ("full".equalsIgnoreCase(generateMode)) {
+                        executeFullNovel(emitter, request.getSessionId(), context, request);
+                    } else if ("volume".equalsIgnoreCase(generateMode)) {
+                        executeVolumeByVolume(emitter, request.getSessionId(), context, request);
+                    } else {
+                        executeStepByStep(emitter, request.getSessionId(), context, request.getMaxStep());
+                    }
                     
                 } catch (Exception e) {
                     log.error("小说生成异常：{}", e.getMessage(), e);
@@ -141,8 +169,10 @@ public class NovelController implements INovelAgentService {
                     NovelContext context = executionStateService.getContext(request.getSessionId());
                     if (context == null) {
                         context = novelContinuationService.buildResumeContext(request.getNovelId());
+                        orchestrator.mergePersistedCheckpoint(context, PipelineCheckpointMergeMode.AFTER_CONTINUATION);
                         executionStateService.saveContext(request.getSessionId(), context);
                     }
+                    attachPipelineSession(context, request.getSessionId());
 
                     if (GenerationStage.COMPLETE.name().equals(context.getCurrentStage())) {
                         sendError(emitter, request.getSessionId(), "当前小说已经生成到规划末尾，无法继续创作新章节");
@@ -150,7 +180,13 @@ public class NovelController implements INovelAgentService {
                     }
 
                     String continueMode = request.getContinueMode();
-                    if ("step".equalsIgnoreCase(continueMode)) {
+                    Integer chaptersToCreate = request.getChaptersToCreate();
+                    Integer wordsPerChapter = request.getWordsPerChapter();
+                    if ("batch".equalsIgnoreCase(continueMode) && chaptersToCreate != null && chaptersToCreate > 0) {
+                        int wpc = (wordsPerChapter != null && wordsPerChapter > 0) ? wordsPerChapter : 3000;
+                        context.setAttribute("wordsPerChapter", wpc);
+                        executeBatchChapters(emitter, request.getSessionId(), context, chaptersToCreate);
+                    } else if ("step".equalsIgnoreCase(continueMode)) {
                         executeStepByStep(emitter, request.getSessionId(), context, request.getMaxStep());
                     } else {
                         executeUntilChapterReview(emitter, request.getSessionId(), context);
@@ -181,6 +217,189 @@ public class NovelController implements INovelAgentService {
         }
     }
     
+    private static void applyGenerationRequestToContext(NovelContext context, NovelGenerateRequestDTO request) {
+        if (context == null || request == null) {
+            return;
+        }
+        if (request.getMasterPrompt() != null && !request.getMasterPrompt().isBlank()) {
+            context.setAttribute(NovelContextKeys.MASTER_PROMPT, request.getMasterPrompt().trim());
+        }
+        if (request.getTotalVolumes() != null && request.getTotalVolumes() > 0) {
+            context.setAttribute(NovelContextKeys.TOTAL_VOLUMES, request.getTotalVolumes());
+        }
+        if (request.getVolumeTargetWordCount() != null && request.getVolumeTargetWordCount() > 0) {
+            context.setAttribute(NovelContextKeys.VOLUME_TARGET_WORD_COUNT, request.getVolumeTargetWordCount());
+        }
+        if (request.getWordCountTolerance() != null && request.getWordCountTolerance() > 0) {
+            context.setAttribute(NovelContextKeys.WORD_COUNT_TOLERANCE, request.getWordCountTolerance());
+        }
+    }
+
+    /**
+     * 按卷自动生成：卷内连续执行不等待确认，每卷结束后推送字数统计并等待用户确认。
+     */
+    private void executeVolumeByVolume(ResponseBodyEmitter emitter, String sessionId, NovelContext context, NovelGenerateRequestDTO request) {
+        java.util.concurrent.locks.ReentrantLock lock = executionStateService.getLock(sessionId);
+        try {
+            lock.lock();
+            while (true) {
+                boolean stopInner = false;
+                boolean bookComplete = false;
+                while (!stopInner) {
+                    NovelAgentOrchestrator.StepExecutionResult result = orchestrator.executeNextStep(context);
+                    if (!result.isSuccess()) {
+                        sendError(emitter, sessionId, result.getMessage());
+                        return;
+                    }
+
+                    sendProgress(emitter, sessionId, result.getCurrentStage(),
+                            String.format("节点[%s]执行完成", result.getNodeName()),
+                            pipelineExecutionStateName(result));
+
+                    if (GenerationStage.VALIDATION.name().equals(result.getCurrentStage())) {
+                        notifyChapterCompleted(emitter, sessionId, context);
+                        maybeSendVolumeCompleted(emitter, sessionId, context);
+                        if (context.getAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION) != null) {
+                            stopInner = true;
+                        }
+                    }
+
+                    if (result.isComplete()) {
+                        bookComplete = true;
+                        stopInner = true;
+                    }
+                }
+
+                VolumeCompletionSummary summary = context.getAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION);
+                if (summary != null) {
+                    context.removeAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION);
+                    sendWaitingForApproval(emitter, sessionId, GenerationStage.VALIDATION.name(),
+                            "VolumeCheckpoint",
+                            summary,
+                            bookComplete ? GenerationStage.COMPLETE.name() : GenerationStage.VOLUME_PLAN.name(),
+                            pipelineExecutionStateName(context));
+
+                    lock.unlock();
+                    CompletableFuture<Boolean> approvalFuture = executionStateService.createApprovalFuture(sessionId);
+                    executionStateService.setCurrentNode(sessionId, "VolumeCheckpoint");
+                    try {
+                        Boolean approved = approvalFuture.get();
+                        if (!approved) {
+                            sendProgress(emitter, sessionId, context.getCurrentStage(), "用户取消继续",
+                                    pipelineExecutionStateName(context));
+                            return;
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    } catch (Exception e) {
+                        sendError(emitter, sessionId, "等待卷确认异常：" + e.getMessage());
+                        return;
+                    } finally {
+                        lock.lock();
+                    }
+                }
+
+                if (bookComplete || GenerationStage.COMPLETE.name().equals(context.getCurrentStage())) {
+                    NovelPlan plan = context.getAttribute("plan");
+                    sendComplete(emitter, sessionId, plan != null ? plan.getNovelId() : context.getNovelId());
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            log.error("按卷生成异常，sessionId: {}", sessionId, e);
+            sendError(emitter, sessionId, "按卷生成异常：" + e.getMessage());
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
+    }
+
+    /**
+     * 一键生成整本：不等待用户确认，持续执行直到完成
+     */
+    private void executeFullNovel(ResponseBodyEmitter emitter, String sessionId, NovelContext context, NovelGenerateRequestDTO request) {
+        try {
+            while (true) {
+                NovelAgentOrchestrator.StepExecutionResult result = orchestrator.executeNextStep(context);
+
+                if (!result.isSuccess()) {
+                    sendError(emitter, sessionId, result.getMessage());
+                    break;
+                }
+
+                sendProgress(emitter, sessionId, result.getCurrentStage(),
+                        String.format("节点[%s]执行完成", result.getNodeName()),
+                        pipelineExecutionStateName(result));
+
+                if (GenerationStage.VALIDATION.name().equals(result.getCurrentStage())) {
+                    notifyChapterCompleted(emitter, sessionId, context);
+                    maybeSendVolumeCompleted(emitter, sessionId, context);
+                }
+
+                if (result.isComplete()) {
+                    NovelPlan plan = context.getAttribute("plan");
+                    sendComplete(emitter, sessionId, plan != null ? plan.getNovelId() : context.getNovelId());
+                    break;
+                }
+
+                sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(),
+                        result.getNodeName(), result.getData(), result.getNextStage(),
+                        pipelineExecutionStateName(result));
+            }
+        } catch (Exception e) {
+            log.error("一键生成整本异常，sessionId: {}", sessionId, e);
+            sendError(emitter, sessionId, "生成异常：" + e.getMessage());
+        }
+    }
+
+    private void notifyChapterCompleted(ResponseBodyEmitter emitter, String sessionId, NovelContext context) {
+        VolumePlan volumePlan = context.getAttribute("currentVolume");
+        ChapterOutline outline = context.getAttribute("currentChapter");
+        Scene scene = context.getAttribute("currentScene");
+        if (outline != null && scene != null) {
+            sendChapterCompleted(emitter, sessionId,
+                    context.getNovelId(),
+                    volumePlan != null ? volumePlan.getVolumeNumber() : 1,
+                    outline.getChapterNumber(),
+                    outline.getChapterTitle(),
+                    scene.getWordCount() != null ? scene.getWordCount() : scene.getContent() != null ? scene.getContent().length() : 0);
+        }
+    }
+
+    private void maybeSendVolumeCompleted(ResponseBodyEmitter emitter, String sessionId, NovelContext context) {
+        VolumeCompletionSummary summary = context.getAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION);
+        if (summary == null) {
+            return;
+        }
+        sendVolumeCompleted(emitter, sessionId, context.getNovelId(), summary);
+    }
+
+    private void sendChapterCompleted(ResponseBodyEmitter emitter, String sessionId, String novelId,
+                                      Integer volumeNumber, Integer chapterNumber, String chapterTitle, Integer wordCount) {
+        try {
+            NovelGenerateResponseDTO response = NovelGenerateResponseDTO.chapterCompleted(
+                    sessionId, novelId, volumeNumber, chapterNumber, chapterTitle, wordCount);
+            String sseData = "data: " + JSON.toJSONString(response) + "\n\n";
+            emitter.send(sseData);
+        } catch (Exception e) {
+            log.error("发送章节完成消息失败：{}", e.getMessage(), e);
+        }
+    }
+
+    private void sendVolumeCompleted(ResponseBodyEmitter emitter, String sessionId, String novelId, VolumeCompletionSummary summary) {
+        try {
+            NovelGenerateResponseDTO response = NovelGenerateResponseDTO.volumeCompleted(sessionId, novelId, summary);
+            String sseData = "data: " + JSON.toJSONString(response) + "\n\n";
+            emitter.send(sseData);
+            log.info("发送卷完成消息，sessionId: {}, volume: {}, volumeWords: {}, bookWords: {}",
+                    sessionId, summary.getVolumeNumber(), summary.getVolumeWordCount(), summary.getBookWordCount());
+        } catch (Exception e) {
+            log.error("发送卷完成消息失败：{}", e.getMessage(), e);
+        }
+    }
+
     /**
      * 分步执行（每次执行一个节点，等待用户确认）
      * 使用锁机制防止并发执行
@@ -209,24 +428,39 @@ public class NovelController implements INovelAgentService {
                 stepCount++;
                 
                 // 发送进度消息
-                sendProgress(emitter, sessionId, result.getCurrentStage(), 
-                        String.format("节点[%s]执行完成", result.getNodeName()));
+                sendProgress(emitter, sessionId, result.getCurrentStage(),
+                        String.format("节点[%s]执行完成", result.getNodeName()),
+                        pipelineExecutionStateName(result));
+
+                if (GenerationStage.VALIDATION.name().equals(result.getCurrentStage())) {
+                    notifyChapterCompleted(emitter, sessionId, context);
+                    maybeSendVolumeCompleted(emitter, sessionId, context);
+                }
                 
                 // 如果已完成，发送完成消息并结束
                 if (result.isComplete()) {
                     log.info("流程执行完成，sessionId: {}, 当前阶段: {}", sessionId, result.getCurrentStage());
                     // 发送等待确认消息（让用户查看最终结果）
-                    sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(), 
-                            result.getNodeName(), result.getData(), result.getNextStage());
+                    sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(),
+                            result.getNodeName(), result.getData(), result.getNextStage(),
+                            pipelineExecutionStateName(result));
                     // 发送完成消息
                     NovelPlan plan = context.getAttribute("plan");
                     sendComplete(emitter, sessionId, plan != null ? plan.getNovelId() : context.getNovelId());
                     break;
                 }
                 
+                Object approvalData = result.getData();
+                VolumeCompletionSummary volumeSummary = context.getAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION);
+                if (volumeSummary != null) {
+                    approvalData = volumeSummary;
+                    context.removeAttribute(NovelContextKeys.LAST_VOLUME_COMPLETION);
+                }
                 // 发送等待确认消息（包含生成的内容）
-                sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(), 
-                        result.getNodeName(), result.getData(), result.getNextStage());
+                sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(),
+                        volumeSummary != null ? "VolumeCheckpoint" : result.getNodeName(),
+                        approvalData, result.getNextStage(),
+                        pipelineExecutionStateName(result));
                 
                 // 等待用户确认
                 CompletableFuture<Boolean> approvalFuture = executionStateService.createApprovalFuture(sessionId);
@@ -241,7 +475,8 @@ public class NovelController implements INovelAgentService {
                     
                     if (!approved) {
                         log.info("用户拒绝继续，sessionId: {}", sessionId);
-                        sendProgress(emitter, sessionId, result.getCurrentStage(), "用户取消执行");
+                        sendProgress(emitter, sessionId, result.getCurrentStage(), "用户取消执行",
+                                pipelineExecutionStateName(context));
                         break;
                     }
                     
@@ -249,7 +484,8 @@ public class NovelController implements INovelAgentService {
                 } catch (InterruptedException e) {
                     log.warn("等待用户确认时被中断，sessionId: {}", sessionId);
                     Thread.currentThread().interrupt();
-                    sendProgress(emitter, sessionId, result.getCurrentStage(), "执行被中断");
+                    sendProgress(emitter, sessionId, result.getCurrentStage(), "执行被中断",
+                            pipelineExecutionStateName(context));
                     break;
                 } catch (Exception e) {
                     log.error("等待用户确认时出现异常，sessionId: {}", sessionId, e);
@@ -277,6 +513,61 @@ public class NovelController implements INovelAgentService {
     }
 
     /**
+     * 批量自动完成多章：不等待用户确认，持续执行直到完成指定数量的章节或规划末尾。
+     */
+    private void executeBatchChapters(ResponseBodyEmitter emitter, String sessionId, NovelContext context, int chaptersToCreate) {
+        java.util.concurrent.locks.ReentrantLock lock = executionStateService.getLock(sessionId);
+        try {
+            lock.lock();
+            int chaptersCreated = 0;
+            while (chaptersCreated < chaptersToCreate) {
+                NovelAgentOrchestrator.StepExecutionResult result = orchestrator.executeNextStep(context);
+                if (!result.isSuccess()) {
+                    sendError(emitter, sessionId, result.getMessage());
+                    break;
+                }
+
+                sendProgress(emitter, sessionId, result.getCurrentStage(),
+                        String.format("节点[%s]执行完成", result.getNodeName()),
+                        pipelineExecutionStateName(result));
+
+                if (result.isComplete()) {
+                    NovelPlan plan = context.getAttribute("plan");
+                    sendComplete(emitter, sessionId, plan != null ? plan.getNovelId() : context.getNovelId());
+                    break;
+                }
+
+                if (GenerationStage.VALIDATION.name().equals(result.getCurrentStage())) {
+                    VolumePlan volumePlan = context.getAttribute("currentVolume");
+                    ChapterOutline outline = context.getAttribute("currentChapter");
+                    Scene scene = context.getAttribute("currentScene");
+                    if (outline != null && scene != null) {
+                        sendChapterCompleted(emitter, sessionId,
+                                context.getNovelId(),
+                                volumePlan != null ? volumePlan.getVolumeNumber() : 1,
+                                outline.getChapterNumber(),
+                                outline.getChapterTitle(),
+                                scene.getWordCount() != null ? scene.getWordCount() : scene.getContent() != null ? scene.getContent().length() : 0);
+                    }
+                    chaptersCreated++;
+                    if (chaptersCreated >= chaptersToCreate) {
+                        NovelPlan plan = context.getAttribute("plan");
+                        sendComplete(emitter, sessionId, plan != null ? plan.getNovelId() : context.getNovelId());
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("批量自动完成异常，sessionId: {}", sessionId, e);
+            sendError(emitter, sessionId, "批量生成异常：" + e.getMessage());
+        } finally {
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
+    }
+
+    /**
      * 自动继续生成，直到一章完成后的校验节点为止。
      * 这样用户只需要在章节管理页修改确认一次，而不是为章节内每个子节点逐步确认。
      */
@@ -292,7 +583,8 @@ public class NovelController implements INovelAgentService {
                 }
 
                 sendProgress(emitter, sessionId, result.getCurrentStage(),
-                        String.format("节点[%s]执行完成", result.getNodeName()));
+                        String.format("节点[%s]执行完成", result.getNodeName()),
+                        pipelineExecutionStateName(result));
 
                 if (result.isComplete()) {
                     NovelPlan plan = context.getAttribute("plan");
@@ -303,7 +595,8 @@ public class NovelController implements INovelAgentService {
                 if (GenerationStage.VALIDATION.name().equals(result.getCurrentStage())) {
                     executionStateService.setCurrentNode(sessionId, result.getNodeName());
                     sendWaitingForApproval(emitter, sessionId, result.getCurrentStage(),
-                            result.getNodeName(), result.getData(), result.getNextStage());
+                            result.getNodeName(), result.getData(), result.getNextStage(),
+                            pipelineExecutionStateName(result));
                     break;
                 }
             }
@@ -322,6 +615,23 @@ public class NovelController implements INovelAgentService {
      * 注意：这里只需要通知等待的Future，不需要重新启动执行流程
      * executeStepByStep已经在等待approvalFuture.get()，通知后会继续执行
      */
+    /**
+     * 阶段失败（Pipeline FAILED）后，同会话内将状态清为 PENDING，保留当前业务阶段，便于再次触发 generate 而无需全量重跑。
+     */
+    @PostMapping("/pipeline/reset-failed")
+    public NovelGenerateResponseDTO resetPipelineFailed(@RequestParam("sessionId") String sessionId) {
+        NovelContext ctx = executionStateService.getContext(sessionId);
+        if (ctx == null) {
+            return NovelGenerateResponseDTO.error(sessionId, "会话不存在或已过期");
+        }
+        if (!orchestrator.resetFailedPipelineToRetryable(ctx)) {
+            return NovelGenerateResponseDTO.error(sessionId, "当前不是 FAILED 状态，无需重置");
+        }
+        return NovelGenerateResponseDTO.progress(sessionId, ctx.getCurrentStage(),
+                "已重置为可重试（同阶段，仍走指数退避）",
+                ctx.getPipelineExecutionState() != null ? ctx.getPipelineExecutionState().name() : null);
+    }
+
     @PostMapping("/approve")
     public cn.bugstack.novel.api.dto.NovelGenerateResponseDTO approveAndContinue(
             @RequestParam("sessionId") String sessionId,
@@ -344,13 +654,34 @@ public class NovelController implements INovelAgentService {
         }
     }
     
+    private static void attachPipelineSession(NovelContext context, String sessionId) {
+        if (context != null && sessionId != null) {
+            context.setAttribute(NovelContextKeys.SESSION_ID, sessionId);
+        }
+    }
+
+    private static String pipelineExecutionStateName(NovelAgentOrchestrator.StepExecutionResult result) {
+        if (result == null || result.getPipelineExecutionState() == null) {
+            return null;
+        }
+        return result.getPipelineExecutionState().name();
+    }
+
+    private static String pipelineExecutionStateName(NovelContext context) {
+        if (context == null || context.getPipelineExecutionState() == null) {
+            return null;
+        }
+        return context.getPipelineExecutionState().name();
+    }
+
     /**
      * 发送进度消息
      */
-    private void sendProgress(ResponseBodyEmitter emitter, String sessionId, String stage, String content) {
+    private void sendProgress(ResponseBodyEmitter emitter, String sessionId, String stage, String content,
+                              String pipelineExecutionState) {
         try {
-            cn.bugstack.novel.api.dto.NovelGenerateResponseDTO response = 
-                    cn.bugstack.novel.api.dto.NovelGenerateResponseDTO.progress(sessionId, stage, content);
+            NovelGenerateResponseDTO response =
+                    NovelGenerateResponseDTO.progress(sessionId, stage, content, pipelineExecutionState);
             String sseData = "data: " + JSON.toJSONString(response) + "\n\n";
             emitter.send(sseData);
         } catch (Exception e) {
@@ -389,11 +720,13 @@ public class NovelController implements INovelAgentService {
     /**
      * 发送等待用户确认消息
      */
-    private void sendWaitingForApproval(ResponseBodyEmitter emitter, String sessionId, 
-                                         String stage, String nodeName, Object data, String nextStage) {
+    private void sendWaitingForApproval(ResponseBodyEmitter emitter, String sessionId,
+                                        String stage, String nodeName, Object data, String nextStage,
+                                        String pipelineExecutionState) {
         try {
-            NovelGenerateResponseDTO response = 
-                    NovelGenerateResponseDTO.waitingForApproval(sessionId, stage, nodeName, data, nextStage);
+            NovelGenerateResponseDTO response =
+                    NovelGenerateResponseDTO.waitingForApproval(sessionId, stage, nodeName, data, nextStage,
+                            pipelineExecutionState);
             String sseData = "data: " + JSON.toJSONString(response) + "\n\n";
             emitter.send(sseData);
             log.info("发送等待确认消息，sessionId: {}, stage: {}, nodeName: {}", sessionId, stage, nodeName);

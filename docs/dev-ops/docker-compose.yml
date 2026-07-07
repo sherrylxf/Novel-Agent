@@ -11,11 +11,10 @@
 #    docker build -t novel-agent:1.0-SNAPSHOT -f ai-agent-station-study-app/Dockerfile ai-agent-station-study-app/
 # 
 # 包含所有服务：
-# - MySQL（业务数据库）
-# - PostgreSQL（向量数据库）
+# - PostgreSQL + pgvector（业务数据 + 向量 RAG，库 novel_vector）
 # - Neo4j（知识图谱）
+# - Redis（缓存 / Redisson）
 # - Novel Agent应用（可选，需要先构建镜像）
-# - 管理工具（phpMyAdmin、pgAdmin）
 #
 # 注意：
 # 1. 使用 docker compose（V2，不带横线）
@@ -24,36 +23,8 @@
 
 services:
   # ==================== 数据库服务 ====================
-  
-  # MySQL数据库（业务数据）
-  mysql:
-    image: mysql:8.0.32
-    container_name: novel-dev-mysql
-    command: --default-authentication-plugin=mysql_native_password
-    restart: always
-    environment:
-      TZ: Asia/Shanghai
-      MYSQL_ROOT_PASSWORD: 123456
-    ports:
-      - "13306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./mysql/sql:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 5s
-      timeout: 10s
-      retries: 10
-      start_period: 15s
-    networks:
-      - novel-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
-  # PostgreSQL + pgvector（向量数据库，RAG）
+  # PostgreSQL + pgvector（业务表 + 向量表，库 novel_vector）
   postgresql:
     image: pgvector/pgvector:pg16
     container_name: novel-dev-postgresql
@@ -69,11 +40,11 @@ services:
       - postgresql_data:/var/lib/postgresql/data
       - ./pgvector/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d novel_vector"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 20
+      start_period: 90s
     networks:
       - novel-network
     logging:
@@ -87,12 +58,15 @@ services:
     image: neo4j:5.15.0
     container_name: novel-dev-neo4j
     restart: always
+    stop_grace_period: 60s
     environment:
+      # 仅对空数据目录生效；卷已存在时入口仍会尝试改密，可能与插件安装阶段冲突并刷「Neo4j is already running」——可忽略或暂时去掉本行（用已有密码连接）
       NEO4J_AUTH: neo4j/password
       NEO4J_PLUGINS: '["apoc"]'
-      # 允许外部访问
-      NEO4J_dbms_connector_http_listen__address: 0.0.0.0:7474
-      NEO4J_dbms_connector_bolt_listen__address: 0.0.0.0:7687
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      # Neo4j 5 推荐项（替代已弃用的 dbms.connector.*）
+      NEO4J_server_http_listen__address: 0.0.0.0:7474
+      NEO4J_server_bolt_listen__address: 0.0.0.0:7687
     ports:
       - "17474:7474"  # HTTP
       - "17687:7687"  # Bolt
@@ -100,11 +74,35 @@ services:
       - neo4j_data:/data
       - neo4j_logs:/logs
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474 || exit 1"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
+    networks:
+      - novel-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis（RAG 检索热点缓存、Redisson 限流与章节生成分布式锁）
+  redis:
+    image: redis:7-alpine
+    container_name: novel-dev-redis
+    restart: always
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     networks:
       - novel-network
     logging:
@@ -155,32 +153,31 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - SPRING_PROFILES_ACTIVE=docker
-      # MySQL连接（使用docker-compose服务名）
-      - SPRING_DATASOURCE_MYSQL_URL=jdbc:mysql://mysql:3306/novel_agent?useUnicode=true&characterEncoding=utf8&autoReconnect=true&zeroDateTimeBehavior=convertToNull&serverTimezone=UTC&useSSL=false
-      - SPRING_DATASOURCE_MYSQL_USERNAME=root
-      - SPRING_DATASOURCE_MYSQL_PASSWORD=123456
-      # PostgreSQL连接（使用docker-compose服务名）
-      - SPRING_DATASOURCE_PGVECTOR_URL=jdbc:postgresql://postgresql:5432/novel_vector
-      - SPRING_DATASOURCE_PGVECTOR_USERNAME=postgres
-      - SPRING_DATASOURCE_PGVECTOR_PASSWORD=postgres
+      # PostgreSQL（业务 + 向量，服务名 postgresql）
+      - SPRING_DATASOURCE_POSTGRESQL_URL=jdbc:postgresql://postgresql:5432/novel_vector
+      - SPRING_DATASOURCE_POSTGRESQL_USERNAME=postgres
+      - SPRING_DATASOURCE_POSTGRESQL_PASSWORD=postgres
       # Neo4j连接（使用docker-compose服务名）
       - SPRING_NEO4J_URI=bolt://neo4j:7687
       - SPRING_NEO4J_AUTHENTICATION_USERNAME=neo4j
       - SPRING_NEO4J_AUTHENTICATION_PASSWORD=password
-      # LLM API配置（通过环境变量传入，避免泄露）
-      - SPRING_AI_OPENAI_API_KEY=${OPENAI_API_KEY}
-      - SPRING_AI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com}
+      # LLM API配置（DeepSeek）
+      - SPRING_AI_OPENAI_API_KEY=${OPENAI_API_KEY:-sk-45e14e100bee45b9b935e65fca433e26}
+      - SPRING_AI_OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.deepseek.com}
       # Embedding API配置（使用本地Ollama）
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-ollama}
       - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-http://ollama:11434/v1}
+      # Redis（与 novel-dev-redis 同网络，服务名 redis）
+      - SPRING_DATA_REDIS_HOST=${SPRING_DATA_REDIS_HOST:-redis}
+      - SPRING_DATA_REDIS_PORT=${SPRING_DATA_REDIS_PORT:-6379}
     volumes:
       - ./logs:/app/logs
     depends_on:
-      mysql:
-        condition: service_healthy
       postgresql:
         condition: service_healthy
       neo4j:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       ollama:
         condition: service_healthy
@@ -198,31 +195,11 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ==================== 管理工具 ====================
-  
-  # phpMyAdmin（MySQL管理工具）
-  phpmyadmin:
-    image: phpmyadmin:5.2.1
-    hostname: phpmyadmin
-    container_name: novel-dev-phpmyadmin
-    restart: always
-    ports:
-      - "8899:80"
-    environment:
-      PMA_HOST: mysql
-      PMA_PORT: 3306
-      MYSQL_ROOT_PASSWORD: 123456
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - novel-network
-
 volumes:
-  mysql_data:
   postgresql_data:
   neo4j_data:
   neo4j_logs:
+  redis_data:
   ollama_data:  # Ollama模型数据持久化
 
 networks:

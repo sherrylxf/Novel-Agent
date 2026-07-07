@@ -1,21 +1,32 @@
 package cn.bugstack.novel.domain.agent.orchestrator;
 
 import cn.bugstack.novel.domain.agent.IAgent;
+import cn.bugstack.novel.domain.agent.adapter.repository.INovelPipelineCheckpointRepository;
+import cn.bugstack.novel.domain.agent.pipeline.GenerationStageStateMachine;
+import cn.bugstack.novel.domain.agent.pipeline.PipelineCheckpointMergeMode;
 import cn.bugstack.novel.domain.agent.service.execute.AbstractExecuteSupport;
+import cn.bugstack.novel.domain.agent.service.execute.StageExecutionRetryPolicy;
 import cn.bugstack.novel.domain.agent.service.execute.chain.RootExecuteNode;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.NovelPlan;
+import cn.bugstack.novel.domain.model.valobj.NovelContextKeys;
+import cn.bugstack.novel.domain.model.valobj.NovelPipelineCheckpointSnapshot;
+import cn.bugstack.novel.domain.model.valobj.NovelAgentRuntimeConfig;
+import cn.bugstack.novel.domain.service.config.INovelAgentRuntimeConfigLoader;
 import cn.bugstack.novel.types.enums.GenerationStage;
+import cn.bugstack.novel.types.enums.PipelineExecutionState;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.Resource;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Novel Agent编排器
@@ -49,6 +60,15 @@ public class NovelAgentOrchestrator {
     
     @Resource
     private cn.bugstack.novel.domain.agent.service.execute.chain.ValidationExecuteNode validationExecuteNode;
+
+    @Resource
+    private StageExecutionRetryPolicy stageExecutionRetryPolicy;
+
+    @Resource
+    private ObjectProvider<INovelAgentRuntimeConfigLoader> agentRuntimeConfigLoaderProvider;
+
+    @Resource
+    private ObjectProvider<INovelPipelineCheckpointRepository> pipelineCheckpointRepositoryProvider;
     
     /**
      * 注册Agent
@@ -91,13 +111,16 @@ public class NovelAgentOrchestrator {
         NovelContext context = NovelContext.builder()
                 .novelId("novel-" + System.currentTimeMillis())
                 .currentStage(GenerationStage.SEED.getName())
+                .pipelineExecutionState(PipelineExecutionState.PENDING)
                 .build();
         
         // 设置参数到上下文
         context.setAttribute("genre", genre);
         context.setAttribute("coreConflict", coreConflict);
         context.setAttribute("worldSetting", worldSetting);
-        
+
+        refreshAgentRuntimeConfig(context);
+
         try {
             // 使用责任链模式执行
             rootExecuteNode.execute(context);
@@ -106,6 +129,7 @@ public class NovelAgentOrchestrator {
             NovelPlan plan = context.getAttribute("plan");
             
             context.setCurrentStage(GenerationStage.COMPLETE.getName());
+            context.setPipelineExecutionState(PipelineExecutionState.COMPLETED);
             log.info("小说生成完成，小说ID: {}", context.getNovelId());
             
             return plan;
@@ -119,22 +143,30 @@ public class NovelAgentOrchestrator {
     /**
      * 初始化上下文（首次调用时）
      * @param targetWordCount 目标总字数（可选，null则使用默认100万字）
+     * @param chaptersTotal 总章节数（一键整本时使用）
+     * @param wordsPerChapter 每章字数（一键整本时使用，默认3000）
      */
-    public NovelContext initializeContext(String genre, String coreConflict, String worldSetting, 
-                                         String novelId, Integer targetWordCount) {
+    public NovelContext initializeContext(String genre, String coreConflict, String worldSetting,
+                                         String novelId, Integer targetWordCount,
+                                         Integer chaptersTotal, Integer wordsPerChapter) {
         NovelContext context = NovelContext.builder()
                 .novelId(novelId != null ? novelId : "novel-" + System.currentTimeMillis())
-                .currentStage(GenerationStage.SEED.name()) // 使用枚举名称，而不是getName()
+                .currentStage(GenerationStage.SEED.name())
+                .pipelineExecutionState(PipelineExecutionState.PENDING)
                 .build();
-        
-        // 设置参数到上下文
+
         context.setAttribute("genre", genre);
         context.setAttribute("coreConflict", coreConflict);
         context.setAttribute("worldSetting", worldSetting);
         context.setAttribute("targetWordCount", targetWordCount);
-        
-        log.info("初始化上下文，novelId: {}, stage: {}, targetWordCount: {}", 
-                context.getNovelId(), context.getCurrentStage(), targetWordCount);
+        context.setAttribute("chaptersTotal", chaptersTotal);
+        context.setAttribute("wordsPerChapter", wordsPerChapter);
+
+        if (chaptersTotal != null && chaptersTotal > 0 && wordsPerChapter != null && wordsPerChapter > 0) {
+            context.setAttribute("targetWordCount", chaptersTotal * wordsPerChapter);
+        }
+        log.info("初始化上下文，novelId: {}, stage: {}, targetWordCount: {}, chaptersTotal: {}, wordsPerChapter: {}",
+                context.getNovelId(), context.getCurrentStage(), context.getAttribute("targetWordCount"), chaptersTotal, wordsPerChapter);
         return context;
     }
     
@@ -146,62 +178,277 @@ public class NovelAgentOrchestrator {
      * @return 执行结果
      */
     public StepExecutionResult executeNextStep(NovelContext context) {
-        String currentStage = context.getCurrentStage();
-        log.info("执行下一步，当前阶段: {}, novelId: {}", currentStage, context.getNovelId());
-        
         try {
-            // 根据当前阶段获取下一个节点
-            AbstractExecuteSupport currentNode = getNodeByStage(currentStage);
-            
-            if (currentNode == null) {
-                log.warn("未找到对应的节点，当前阶段: {}", currentStage);
+            if (context != null && context.getPipelineExecutionState() == null) {
+                context.setPipelineExecutionState(PipelineExecutionState.PENDING);
+            }
+            Optional<String> blocked = preflightExecutable(context);
+            if (blocked.isPresent()) {
                 return StepExecutionResult.builder()
                         .success(false)
-                        .message("未找到对应的执行节点")
-                        .currentStage(currentStage)
+                        .message(blocked.get())
+                        .currentStage(context != null ? context.getCurrentStage() : null)
+                        .pipelineExecutionState(context != null ? context.getPipelineExecutionState() : null)
                         .build();
             }
-            
-            log.info("找到执行节点: {}, 开始执行", currentNode.getClass().getSimpleName());
-            
-            // 执行当前节点（但不自动执行下一个节点）
-            AbstractExecuteSupport nextNode = currentNode.executeStep(context);
-            
-            log.info("节点执行完成，返回的下一个节点: {}", nextNode != null ? nextNode.getClass().getSimpleName() : "null");
-            
-            // 获取下一个阶段
-            String nextStage = nextNode != null ? getStageByNode(nextNode) : GenerationStage.COMPLETE.getName();
-            
-            // 获取生成的数据
-            Object generatedData = getGeneratedDataByStage(context, currentStage);
-            
-            // 更新当前阶段（使用枚举名称）
-            if (nextNode != null) {
-                context.setCurrentStage(nextStage);
-            } else {
-                context.setCurrentStage(GenerationStage.COMPLETE.name());
+
+            StageExecutionRetryPolicy policy = stageExecutionRetryPolicy != null
+                    ? stageExecutionRetryPolicy
+                    : StageExecutionRetryPolicy.builder().build();
+            int maxAttempts = Math.max(1, policy.getMaxAttempts());
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    return executeNextStepOnce(context);
+                } catch (Exception e) {
+                    log.warn("阶段执行失败 [{}/{}]，将指数退避重试: {}", attempt, maxAttempts, e.getMessage());
+                    if (attempt >= maxAttempts) {
+                        log.error("执行节点失败（已达最大重试），当前阶段: {}", context.getCurrentStage(), e);
+                        context.setPipelineExecutionState(PipelineExecutionState.FAILED);
+                        context.setAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE, e.getMessage());
+                        return StepExecutionResult.builder()
+                                .success(false)
+                                .message("执行失败: " + e.getMessage())
+                                .currentStage(context.getCurrentStage())
+                                .pipelineExecutionState(PipelineExecutionState.FAILED)
+                                .build();
+                    }
+                    context.setPipelineExecutionState(PipelineExecutionState.RETRYING);
+                    maybePersistCheckpoint(context);
+                    long sleepMs = policy.delayAfterAttemptMs(attempt + 1);
+                    if (sleepMs > 0) {
+                        try {
+                            Thread.sleep(sleepMs);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            context.setPipelineExecutionState(PipelineExecutionState.FAILED);
+                            context.setAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE, "执行被中断");
+                            return StepExecutionResult.builder()
+                                    .success(false)
+                                    .message("执行被中断")
+                                    .currentStage(context.getCurrentStage())
+                                    .pipelineExecutionState(PipelineExecutionState.FAILED)
+                                    .build();
+                        }
+                    }
+                    context.setPipelineExecutionState(PipelineExecutionState.PENDING);
+                    maybePersistCheckpoint(context);
+                }
             }
-            
-            log.info("节点执行完成，当前阶段: {}, 下一个阶段: {}", currentStage, nextStage);
-            
-            return StepExecutionResult.builder()
-                    .success(true)
-                    .currentStage(currentStage)
-                    .nextStage(nextStage)
-                    .nodeName(currentNode.getClass().getSimpleName())
-                    .nextNodeName(nextNode != null ? nextNode.getClass().getSimpleName() : null)
-                    .data(generatedData)
-                    .isComplete(nextNode == null)
-                    .build();
-            
-        } catch (Exception e) {
-            log.error("执行节点失败，当前阶段: {}", currentStage, e);
+            context.setPipelineExecutionState(PipelineExecutionState.FAILED);
+            context.setAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE, "执行失败：重试耗尽");
             return StepExecutionResult.builder()
                     .success(false)
-                    .message("执行失败: " + e.getMessage())
+                    .message("执行失败：重试耗尽")
+                    .currentStage(context.getCurrentStage())
+                    .pipelineExecutionState(PipelineExecutionState.FAILED)
+                    .build();
+        } finally {
+            maybePersistCheckpoint(context);
+        }
+    }
+
+    /**
+     * 执行前校验：终态任务不再推进，避免重复执行、乱序执行。
+     */
+    private Optional<String> preflightExecutable(NovelContext context) {
+        if (context == null) {
+            return Optional.of("上下文为空");
+        }
+        PipelineExecutionState s = context.getPipelineExecutionState();
+        if (s == PipelineExecutionState.COMPLETED) {
+            return Optional.of("任务已完成，无需继续执行");
+        }
+        if (s == PipelineExecutionState.FAILED) {
+            return Optional.of("任务已失败：可调用 POST /api/v1/novel/pipeline/reset-failed 同会话重试当前阶段，"
+                    + "或换新 session 并携带 novelId 以从检查点恢复（无需全量重跑）");
+        }
+        if (s == PipelineExecutionState.RETRYING) {
+            return Optional.of("任务退避重试中，请稍候再触发下一步");
+        }
+        return Optional.empty();
+    }
+
+    private void maybePersistCheckpoint(NovelContext context) {
+        INovelPipelineCheckpointRepository repo = pipelineCheckpointRepositoryProvider.getIfAvailable();
+        if (repo == null || context == null || context.getNovelId() == null || context.getNovelId().isBlank()) {
+            return;
+        }
+        try {
+            repo.upsert(context);
+        } catch (Exception e) {
+            log.warn("持久化 Pipeline 检查点失败（可忽略）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 自库合并检查点：新建生成流在 {@link #initializeContext} 之后调用；
+     * 续写流在 {@link cn.bugstack.novel.domain.service.novel.INovelContinuationService#buildResumeContext} 之后调用。
+     */
+    public void mergePersistedCheckpoint(NovelContext context, PipelineCheckpointMergeMode mode) {
+        INovelPipelineCheckpointRepository repo = pipelineCheckpointRepositoryProvider.getIfAvailable();
+        if (repo == null || context == null || context.getNovelId() == null || context.getNovelId().isBlank()) {
+            return;
+        }
+        Optional<NovelPipelineCheckpointSnapshot> snap = repo.findByNovelId(context.getNovelId());
+        if (snap.isEmpty()) {
+            return;
+        }
+        NovelPipelineCheckpointSnapshot cp = snap.get();
+        PipelineExecutionState persisted = parsePersistedPipelineState(cp.pipelineExecutionState());
+        if (mode == PipelineCheckpointMergeMode.AFTER_CONTINUATION
+                && !shouldOverlayStageAfterContinuation(persisted)) {
+            return;
+        }
+        boolean overlayStage = mode == PipelineCheckpointMergeMode.FRESH_SESSION
+                || shouldOverlayStageAfterContinuation(persisted);
+        if (overlayStage && cp.currentStage() != null && !cp.currentStage().isBlank()) {
+            context.setCurrentStage(cp.currentStage());
+        }
+        PipelineExecutionState normalized = normalizeCheckpointPipelineState(persisted);
+        context.setPipelineExecutionState(normalized);
+        if (cp.lastFailureMessage() != null && !cp.lastFailureMessage().isBlank()) {
+            context.setAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE, cp.lastFailureMessage());
+        }
+        log.info("已合并 Pipeline 检查点 novelId={}, mode={}, stage={}, state={} -> {}",
+                context.getNovelId(), mode, cp.currentStage(), cp.pipelineExecutionState(), normalized);
+    }
+
+    /**
+     * 同会话内将 FAILED 清为 PENDING，保留 {@link NovelContext#getCurrentStage()}，用于阶段级手动重试（仍走指数退避）。
+     */
+    public boolean resetFailedPipelineToRetryable(NovelContext context) {
+        if (context == null || context.getPipelineExecutionState() != PipelineExecutionState.FAILED) {
+            return false;
+        }
+        context.setPipelineExecutionState(PipelineExecutionState.PENDING);
+        context.removeAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE);
+        maybePersistCheckpoint(context);
+        log.info("已重置 FAILED -> PENDING，准备同阶段重试 novelId={}, stage={}",
+                context.getNovelId(), context.getCurrentStage());
+        return true;
+    }
+
+    private static boolean shouldOverlayStageAfterContinuation(PipelineExecutionState persisted) {
+        if (persisted == null) {
+            return false;
+        }
+        return persisted == PipelineExecutionState.FAILED
+                || persisted == PipelineExecutionState.RETRYING
+                || persisted == PipelineExecutionState.RUNNING
+                || persisted == PipelineExecutionState.STEP_FAILED;
+    }
+
+    private static PipelineExecutionState parsePersistedPipelineState(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return PipelineExecutionState.valueOf(raw.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 失败/半态在重新进入编排时统一降为 PENDING，避免 preflight 把恢复后的会话挡在 RETRYING/RUNNING 外。
+     */
+    private static PipelineExecutionState normalizeCheckpointPipelineState(PipelineExecutionState persisted) {
+        if (persisted == null) {
+            return PipelineExecutionState.PENDING;
+        }
+        if (persisted == PipelineExecutionState.FAILED
+                || persisted == PipelineExecutionState.RETRYING
+                || persisted == PipelineExecutionState.RUNNING
+                || persisted == PipelineExecutionState.STEP_FAILED) {
+            return PipelineExecutionState.PENDING;
+        }
+        return persisted;
+    }
+
+    /**
+     * 每步执行前从库合并全局 + 本书配置，供 LLM 装饰层按 Agent 类型读取。
+     */
+    private void refreshAgentRuntimeConfig(NovelContext context) {
+        INovelAgentRuntimeConfigLoader loader = agentRuntimeConfigLoaderProvider.getIfAvailable();
+        if (loader == null || context == null) {
+            return;
+        }
+        try {
+            NovelAgentRuntimeConfig cfg = loader.load(context.getNovelId());
+            context.setAttribute(NovelContextKeys.AGENT_RUNTIME_CONFIG, cfg);
+            log.debug("已刷新 novel_agent_config，novelId={}, agentTypeCount={}",
+                    context.getNovelId(), cfg.agentTypeCount());
+        } catch (Exception e) {
+            log.warn("加载 novel_agent_config 失败，本步将不使用库内 LLM 覆盖: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 单次执行一步（不重试）；失败抛异常以便外层退避重试，阶段未找到则返回 success=false。
+     */
+    private StepExecutionResult executeNextStepOnce(NovelContext context) {
+        refreshAgentRuntimeConfig(context);
+
+        context.setPipelineExecutionState(PipelineExecutionState.RUNNING);
+
+        String currentStage = context.getCurrentStage();
+        log.info("执行下一步，当前阶段: {}, novelId: {}", currentStage, context.getNovelId());
+
+        AbstractExecuteSupport currentNode = getNodeByStage(currentStage);
+
+        if (currentNode == null) {
+            log.warn("未找到对应的节点，当前阶段: {}", currentStage);
+            String msg = "未找到对应的执行节点";
+            context.setPipelineExecutionState(PipelineExecutionState.FAILED);
+            context.setAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE, msg);
+            return StepExecutionResult.builder()
+                    .success(false)
+                    .message(msg)
                     .currentStage(currentStage)
+                    .pipelineExecutionState(PipelineExecutionState.FAILED)
                     .build();
         }
+
+        log.info("找到执行节点: {}, 开始执行", currentNode.getClass().getSimpleName());
+
+        AbstractExecuteSupport nextNode;
+        try {
+            nextNode = currentNode.executeStep(context);
+        } catch (RuntimeException e) {
+            context.setPipelineExecutionState(PipelineExecutionState.STEP_FAILED);
+            throw e;
+        }
+
+        log.info("节点执行完成，返回的下一个节点: {}", nextNode != null ? nextNode.getClass().getSimpleName() : "null");
+
+        String nextStage = nextNode != null ? getStageByNode(nextNode) : GenerationStage.COMPLETE.getName();
+
+        GenerationStageStateMachine.logIfAtypicalTransition(currentStage, nextStage);
+
+        Object generatedData = getGeneratedDataByStage(context, currentStage);
+
+        if (nextNode != null) {
+            context.setCurrentStage(nextStage);
+        } else {
+            context.setCurrentStage(GenerationStage.COMPLETE.name());
+        }
+
+        context.removeAttribute(NovelContextKeys.LAST_STAGE_FAILURE_MESSAGE);
+        PipelineExecutionState after = nextNode == null ? PipelineExecutionState.COMPLETED : PipelineExecutionState.STAGE_SUCCEEDED;
+        context.setPipelineExecutionState(after);
+
+        log.info("节点执行完成，当前阶段: {}, 下一个阶段: {}, pipelineState: {}", currentStage, nextStage, after);
+
+        return StepExecutionResult.builder()
+                .success(true)
+                .currentStage(currentStage)
+                .nextStage(nextStage)
+                .nodeName(currentNode.getClass().getSimpleName())
+                .nextNodeName(nextNode != null ? nextNode.getClass().getSimpleName() : null)
+                .data(generatedData)
+                .isComplete(nextNode == null)
+                .pipelineExecutionState(after)
+                .build();
     }
     
     /**
@@ -391,6 +638,11 @@ public class NovelAgentOrchestrator {
          * 是否完成（没有下一个节点）
          */
         private boolean isComplete;
+
+        /**
+         * 本步完成后上下文所处的 Pipeline 生命周期状态（{@link PipelineExecutionState}）
+         */
+        private PipelineExecutionState pipelineExecutionState;
     }
     
 }

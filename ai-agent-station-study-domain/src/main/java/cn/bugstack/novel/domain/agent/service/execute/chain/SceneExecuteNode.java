@@ -12,10 +12,13 @@ import cn.bugstack.novel.domain.service.kg.KgSyncFacade;
 import cn.bugstack.novel.domain.service.kg.KgStorySyncUtil;
 import cn.bugstack.novel.domain.service.rag.IRAGService;
 import cn.bugstack.novel.domain.service.rag.StoryMemoryDocumentUtil;
+import cn.bugstack.novel.domain.service.guard.INovelGenerationGuard;
 import cn.bugstack.novel.domain.service.persistence.INovelGenerationStoreService;
 import cn.bugstack.novel.types.enums.GenerationStage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import org.springframework.beans.factory.annotation.Autowired;
 
 import jakarta.annotation.Resource;
 import org.springframework.context.annotation.Lazy;
@@ -23,7 +26,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 场景执行节点
@@ -48,6 +50,9 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
     
     @Resource
     private ValidationExecuteNode validationExecuteNode;
+
+    @Autowired(required = false)
+    private INovelGenerationGuard novelGenerationGuard;
     
     @Override
     protected AbstractExecuteSupport doExecute(NovelContext context) {
@@ -55,10 +60,21 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
         
         // 从上下文获取ChapterOutline
         ChapterOutline outline = context.getAttribute("currentChapter");
+        VolumePlan volumePlan = context.getAttribute("currentVolume");
+        Integer volumeNumber = volumePlan != null ? volumePlan.getVolumeNumber() : null;
         
         // 执行场景生成
         IAgent<ChapterOutline, Scene> sceneAgent = orchestrator.getAgent("SceneGenerationAgent");
-        Scene scene = sceneAgent.execute(outline, context);
+        Scene scene;
+        if (novelGenerationGuard != null) {
+            scene = novelGenerationGuard.supplyWithSceneGenerationLock(
+                    context.getNovelId(),
+                    volumeNumber,
+                    outline != null ? outline.getChapterNumber() : null,
+                    () -> sceneAgent.execute(outline, context));
+        } else {
+            scene = sceneAgent.execute(outline, context);
+        }
         
         // 保存到上下文
         context.setAttribute("currentScene", scene);
@@ -75,8 +91,6 @@ public class SceneExecuteNode extends AbstractExecuteSupport {
         
         // 自动落库 + 导出txt（不阻塞主流程）
         try {
-            VolumePlan volumePlan = context.getAttribute("currentVolume");
-            Integer volumeNumber = volumePlan != null ? volumePlan.getVolumeNumber() : null;
             String chapterId = generationStoreService.persistChapterAndScene(context.getNovelId(), volumeNumber, outline, scene);
             ExtractedEntities extractedEntities = null;
             if (chapterId != null && outline != null) {

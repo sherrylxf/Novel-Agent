@@ -25,7 +25,6 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-@org.springframework.boot.autoconfigure.condition.ConditionalOnBean(Driver.class)
 public class Neo4jKnowledgeGraphService implements IKnowledgeGraphService {
     
     @Autowired(required = false)

@@ -6,6 +6,7 @@ import cn.bugstack.novel.domain.agent.service.execute.AbstractExecuteSupport;
 import cn.bugstack.novel.domain.model.entity.NovelContext;
 import cn.bugstack.novel.domain.model.entity.NovelSeed;
 import cn.bugstack.novel.domain.model.valobj.Character;
+import cn.bugstack.novel.domain.model.valobj.NovelContextKeys;
 import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
 import cn.bugstack.novel.domain.service.kg.KgCharacterSyncUtil;
 import cn.bugstack.novel.domain.service.persistence.INovelGenerationStoreService;
@@ -42,12 +43,18 @@ public class SeedExecuteNode extends AbstractExecuteSupport {
     protected AbstractExecuteSupport doExecute(NovelContext context) {
         log.info("Seed节点：开始生成Seed");
         
+        String masterPrompt = context.getAttribute(NovelContextKeys.MASTER_PROMPT);
         String genre = context.getAttribute("genre");
         String coreConflict = context.getAttribute("coreConflict");
         String worldSetting = context.getAttribute("worldSetting");
-        
+
         IAgent<String, NovelSeed> seedAgent = orchestrator.getAgent("NovelSeedAgent");
-        String input = String.format("题材: %s\n核心冲突: %s\n世界观: %s", genre, coreConflict, worldSetting);
+        String input;
+        if (masterPrompt != null && !masterPrompt.isBlank()) {
+            input = masterPrompt.trim();
+        } else {
+            input = String.format("题材: %s\n核心冲突: %s\n世界观: %s", genre, coreConflict, worldSetting);
+        }
         NovelSeed seed = seedAgent.execute(input, context);
         
         context.setAttribute("seed", seed);

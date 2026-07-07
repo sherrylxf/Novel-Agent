@@ -6,6 +6,7 @@ import cn.bugstack.novel.domain.model.entity.StoryProgress;
 import cn.bugstack.novel.domain.model.entity.VolumePlan;
 import cn.bugstack.novel.domain.service.kg.IKnowledgeGraphService;
 import cn.bugstack.novel.domain.service.plot.IPlotTrackerService;
+import cn.bugstack.novel.domain.service.plot.StoryPacingPolicy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -15,7 +16,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 
 /**
- * Plot Tracker 实现：组合 MySQL 规划/章节与 Neo4j 伏笔，构建 StoryProgress
+ * Plot Tracker 实现：组合 PostgreSQL 规划/章节与 Neo4j 伏笔，构建 StoryProgress
  */
 @Slf4j
 @Service
@@ -44,15 +45,22 @@ public class PlotTrackerServiceImpl implements IPlotTrackerService {
         int plannedTotalChapters = 0;
         int currentChapterNumber = 1;
         if (plan != null) {
-            int pv = plan.getTotalVolumes() != null ? plan.getTotalVolumes() : 1;
             int cv = plan.getChaptersPerVolume() != null ? plan.getChaptersPerVolume() : 20;
-            plannedTotalChapters = pv * cv;
+            plannedTotalChapters = StoryPacingPolicy.resolvePlannedTotalChapters(plan);
             currentChapterNumber = (currentVolumeNumber - 1) * cv + currentChapterInVolume;
         }
 
         List<String> fromOutlines = context.getAttribute("unresolvedForeshadowingsFromChapters");
         List<String> unresolved = collectUnresolvedForeshadowing(context.getNovelId(), fromOutlines);
-        List<String> activePlotThreads = knowledgeGraphService.listActivePlotThreads(context.getNovelId(), 8);
+        List<String> activePlotThreads = knowledgeGraphService != null
+                ? knowledgeGraphService.listActivePlotThreads(context.getNovelId(), 8)
+                : new ArrayList<>();
+        Integer targetWordCount = context.getAttribute("targetWordCount");
+        Integer generatedWordCount = context.getAttribute("accumulatedWordCount");
+        int remainingChapters = plannedTotalChapters > 0 ? Math.max(0, plannedTotalChapters - currentChapterNumber) : 0;
+        Integer remainingWordCount = targetWordCount != null && generatedWordCount != null
+                ? Math.max(0, targetWordCount - generatedWordCount)
+                : null;
 
         log.info("Plot Tracker: 当前进度 第{}章/共{}章, 未解决伏笔数={}, 活跃剧情线程数={}",
                 currentChapterNumber, plannedTotalChapters, unresolved.size(), activePlotThreads.size());
@@ -60,6 +68,10 @@ public class PlotTrackerServiceImpl implements IPlotTrackerService {
                 .storySummary(storySummary != null ? storySummary : "")
                 .currentChapterNumber(currentChapterNumber)
                 .plannedTotalChapters(plannedTotalChapters > 0 ? plannedTotalChapters : null)
+                .targetWordCount(targetWordCount)
+                .generatedWordCount(generatedWordCount)
+                .remainingChapters(remainingChapters)
+                .remainingWordCount(remainingWordCount)
                 .unresolvedForeshadowings(unresolved)
                 .activePlotThreads(activePlotThreads)
                 .build();
@@ -67,7 +79,9 @@ public class PlotTrackerServiceImpl implements IPlotTrackerService {
 
     @Override
     public List<String> collectUnresolvedForeshadowing(String novelId, List<String> fromChapterOutlines) {
-        List<String> fromKg = knowledgeGraphService.listUnresolvedForeshadowing(novelId);
+        List<String> fromKg = knowledgeGraphService != null
+                ? knowledgeGraphService.listUnresolvedForeshadowing(novelId)
+                : new ArrayList<>();
         LinkedHashSet<String> set = new LinkedHashSet<>();
         if (fromKg != null) set.addAll(fromKg);
         if (fromChapterOutlines != null) set.addAll(fromChapterOutlines);

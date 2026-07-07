@@ -35,6 +35,11 @@ public class NovelWorkspaceService implements INovelWorkspaceService {
     }
 
     @Override
+    public List<NovelProject> queryAllNovelProjects() {
+        return novelWorkspaceRepository.queryAllNovelProjects();
+    }
+
+    @Override
     public NovelProject queryNovelProject(String novelId) {
         return novelWorkspaceRepository.queryNovelProject(novelId);
     }
@@ -67,6 +72,22 @@ public class NovelWorkspaceService implements INovelWorkspaceService {
     @Override
     public ChapterDetail queryChapterDetail(String chapterId) {
         return novelWorkspaceRepository.queryChapterDetail(chapterId);
+    }
+
+    @Override
+    public String getPreviousChapterEnding(String novelId, Integer volumeNumber, Integer currentChapterNumber) {
+        if (novelId == null || volumeNumber == null || currentChapterNumber == null || currentChapterNumber <= 1) {
+            return "";
+        }
+        String content = novelWorkspaceRepository.getChapterContent(novelId, volumeNumber, currentChapterNumber - 1);
+        if (content == null || content.isBlank()) {
+            return "";
+        }
+        int maxLen = 1200;
+        if (content.length() <= maxLen) {
+            return content;
+        }
+        return content.substring(content.length() - maxLen);
     }
 
     @Override

@@ -31,6 +31,11 @@ public interface INovelDao {
      * 查询所有启用的小说
      */
     List<Novel> queryEnabledNovels();
+
+    /**
+     * 查询所有小说（含已归档）
+     */
+    List<Novel> queryAllNovels();
     
     /**
      * 根据题材查询

@@ -15,7 +15,6 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -35,8 +34,7 @@ import java.util.Map;
  * 使用PostgreSQL + pgvector + Spring AI VectorStore
  */
 @Slf4j
-@Service
-@Primary
+@Service("vectorRAGServiceDelegate")
 @ConditionalOnBean(name = "vectorStore")
 public class VectorRAGService implements IRAGService {
 

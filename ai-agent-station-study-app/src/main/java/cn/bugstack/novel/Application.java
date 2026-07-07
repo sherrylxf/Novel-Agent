@@ -20,12 +20,12 @@ import org.springframework.retry.annotation.EnableRetry;
 @SpringBootApplication(
         scanBasePackages = {"cn.bugstack.novel"},
         exclude = {
-                // 排除自动配置，使用自定义多数据源配置
+                // 使用自定义多数据源配置
                 DataSourceAutoConfiguration.class,
                 Neo4jAutoConfiguration.class,
-                // 排除 Spring AI PgVectorStore 自动配置，使用自定义 VectorStoreConfig
+                // 使用自定义 VectorStoreConfig
                 PgVectorStoreAutoConfiguration.class,
-                // 排除 OpenAI 语音/转录/Chat/Embedding/Image/Moderation 自动配置（本项目使用 LLMClientConfig + VectorStoreConfig + DeepSeek/Ollama）
+                // 本项目使用 LLMClientConfig + VectorStoreConfig + DeepSeek/Ollama
                 OpenAiAudioSpeechAutoConfiguration.class,
                 OpenAiAudioTranscriptionAutoConfiguration.class,
                 OpenAiChatAutoConfiguration.class,

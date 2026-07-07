@@ -15,6 +15,11 @@ public interface INovelWorkspaceRepository {
 
     List<NovelProject> queryNovelProjects();
 
+    /**
+     * 查询所有小说（含已归档），用于阅读页
+     */
+    List<NovelProject> queryAllNovelProjects();
+
     NovelProject queryNovelProject(String novelId);
 
     void archiveNovel(String novelId);
@@ -28,6 +33,11 @@ public interface INovelWorkspaceRepository {
     List<ChapterDetail> queryChapters(String novelId);
 
     ChapterDetail queryChapterDetail(String chapterId);
+
+    /**
+     * 按小说ID、卷号、章节号查询章节正文（用于前后章衔接）
+     */
+    String getChapterContent(String novelId, Integer volumeNumber, Integer chapterNumber);
 
     ChapterDetail saveOrUpdateChapter(ChapterDetail chapterDetail);
 

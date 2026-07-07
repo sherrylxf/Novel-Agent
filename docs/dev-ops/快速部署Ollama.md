@@ -3,7 +3,7 @@
 ## 前提条件
 
 - Docker和Docker Compose已安装
-- 其他容器（MySQL、PostgreSQL等）已经运行
+- 其他容器（PostgreSQL 等）已经运行
 
 ## 一键部署步骤
 
