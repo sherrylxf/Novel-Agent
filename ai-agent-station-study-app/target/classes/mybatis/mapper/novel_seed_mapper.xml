@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.bugstack.novel.infrastructure.dao.INovelSeedDao">
+
+    <resultMap id="NovelSeedMap" type="cn.bugstack.novel.infrastructure.dao.po.NovelSeed">
+        <id column="id" property="id"/>
+        <result column="seed_id" property="seedId"/>
+        <result column="novel_id" property="novelId"/>
+        <result column="title" property="title"/>
+        <result column="genre" property="genre"/>
+        <result column="core_conflict" property="coreConflict"/>
+        <result column="world_setting" property="worldSetting"/>
+        <result column="protagonist_setting" property="protagonistSetting"/>
+        <result column="target_word_count" property="targetWordCount"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="cn.bugstack.novel.infrastructure.dao.po.NovelSeed">
+        INSERT INTO novel_seed (seed_id, novel_id, title, genre, core_conflict, world_setting, 
+                                protagonist_setting, target_word_count, create_time, update_time)
+        VALUES (#{seedId}, #{novelId}, #{title}, #{genre}, #{coreConflict}, #{worldSetting},
+                #{protagonistSetting}, #{targetWordCount}, NOW(), NOW())
+    </insert>
+
+    <update id="updateBySeedId" parameterType="cn.bugstack.novel.infrastructure.dao.po.NovelSeed">
+        UPDATE novel_seed
+        SET title = #{title},
+            genre = #{genre},
+            core_conflict = #{coreConflict},
+            world_setting = #{worldSetting},
+            protagonist_setting = #{protagonistSetting},
+            target_word_count = #{targetWordCount},
+            update_time = NOW()
+        WHERE seed_id = #{seedId}
+    </update>
+
+    <select id="queryBySeedId" parameterType="java.lang.String" resultMap="NovelSeedMap">
+        SELECT id, seed_id, novel_id, title, genre, core_conflict, world_setting,
+               protagonist_setting, target_word_count, create_time, update_time
+        FROM novel_seed
+        WHERE seed_id = #{seedId}
+    </select>
+
+    <select id="queryByNovelId" parameterType="java.lang.String" resultMap="NovelSeedMap">
+        SELECT id, seed_id, novel_id, title, genre, core_conflict, world_setting,
+               protagonist_setting, target_word_count, create_time, update_time
+        FROM novel_seed
+        WHERE novel_id = #{novelId}
+        ORDER BY create_time DESC
+    </select>
+
+</mapper>

@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: novel-agent
+
+  # Redis（Docker Compose 服务名 redis；本地可覆盖为 host.docker.internal 或 localhost）
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+  
+  # PostgreSQL：业务表 + pgvector（单一连接，服务名 postgresql）
+  datasource:
+    postgresql:
+      driver-class-name: org.postgresql.Driver
+      url: ${SPRING_DATASOURCE_POSTGRESQL_URL:jdbc:postgresql://postgresql:5432/novel_vector}
+      username: ${SPRING_DATASOURCE_POSTGRESQL_USERNAME:postgres}
+      password: ${SPRING_DATASOURCE_POSTGRESQL_PASSWORD:postgres}
+      hikari:
+        maximum-pool-size: 15
+        minimum-idle: 5
+        idle-timeout: 30000
+        connection-timeout: 30000
+        max-lifetime: 1800000
+  
+  # Neo4j配置（知识图谱）
+  neo4j:
+    uri: ${SPRING_NEO4J_URI:bolt://neo4j:7687}
+    authentication:
+      username: ${SPRING_NEO4J_AUTHENTICATION_USERNAME:neo4j}
+      password: ${SPRING_NEO4J_AUTHENTICATION_PASSWORD:password}
+  
+  # AI配置（LLM API - 使用 DeepSeek）
+  ai:
+    openai:
+      # ========== Chat API 配置（用于文本生成）==========
+      api-key: ${SPRING_AI_OPENAI_API_KEY:sk-45e14e100bee45b9b935e65fca433e26}
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.deepseek.com}
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.7
+          max-tokens: 4096
+      # 支持的API提供商：
+      # - DeepSeek: https://api.deepseek.com（默认）
+      # - OpenAI: https://api.openai.com
+      # - Qwen: https://dashscope.aliyuncs.com/compatible-mode/v1
+      # - 其他兼容OpenAI API的提供商
+      
+      # ========== Embeddings API 配置（用于RAG向量检索）==========
+      # 使用本地Ollama服务（推荐，免费且无需API密钥）
+      embedding:
+        options:
+          model: ${OPENAI_EMBEDDING_MODEL:nomic-embed-text}  # Ollama的embedding模型
+      
+      # Ollama Embeddings配置（通过环境变量配置，优先级最高）
+      # 如果环境变量未设置，使用配置文件中的默认值
+      embedding-api-key: ${EMBEDDING_API_KEY:ollama}  # Ollama不需要真实的key
+      embedding-base-url: ${EMBEDDING_BASE_URL:http://ollama:11434/v1}  # 使用docker服务名
+  
+  # MyBatis配置
+  mybatis:
+    mapper-locations: classpath:/mybatis/mapper/**/*.xml
+    config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+# 日志配置
+logging:
+  level:
+    cn.bugstack.novel: DEBUG
+    org.springframework.ai: INFO
+    root: INFO
+  file:
+    name: /app/logs/novel-agent.log

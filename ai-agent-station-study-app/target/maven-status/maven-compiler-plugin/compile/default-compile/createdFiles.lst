@@ -1,0 +1,12 @@
+cn\bugstack\novel\config\KgFallbackConfig.class
+cn\bugstack\novel\config\Neo4jConfig.class
+META-INF\spring-configuration-metadata.json
+cn\bugstack\novel\config\NovelAgentConfig.class
+cn\bugstack\novel\config\ThreadPoolConfig.class
+cn\bugstack\novel\config\NovelPipelineProperties.class
+cn\bugstack\novel\config\NovelPipelineConfiguration.class
+cn\bugstack\novel\config\DataSourceConfig.class
+cn\bugstack\novel\config\NovelAgentConfig$1.class
+cn\bugstack\novel\config\ThreadPoolConfigProperties.class
+cn\bugstack\novel\config\NovelPipelineProperties$Retry.class
+cn\bugstack\novel\config\KgFallbackConfig$1.class

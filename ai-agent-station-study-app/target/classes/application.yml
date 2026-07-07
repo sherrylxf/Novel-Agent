@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: novel-agent
+  profiles:
+    active: dev
+  
+  # PostgreSQL：业务表 + pgvector（单一库 novel_vector）
+  datasource:
+    postgresql:
+      driver-class-name: org.postgresql.Driver
+      url: jdbc:postgresql://127.0.0.1:15432/novel_vector
+      username: postgres
+      password: postgres
+      hikari:
+        maximum-pool-size: 15
+        minimum-idle: 5
+        idle-timeout: 30000
+        connection-timeout: 30000
+        max-lifetime: 1800000
+  
+  # Neo4j配置（知识图谱）- 可选，如果暂时不使用知识图谱功能可以注释
+  # neo4j:
+  #   uri: bolt://localhost:7687
+  #   authentication:
+  #     username: neo4j
+  #     password: password
+  
+  # AI配置（LLM API）- 可选，如果暂时不使用LLM功能可以注释
+  # ai:
+  #   openai:
+  #     api-key: ${OPENAI_API_KEY:your-api-key}
+  #     base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+  
+  # MyBatis配置
+  mybatis:
+    mapper-locations: classpath:/mybatis/mapper/**/*.xml
+    config-location: classpath:/mybatis/config/mybatis-config.xml
+
+# 小说生成流水线（阶段级指数退避重试 + 检查点落库断点恢复）
+novel:
+  # 场景生成「五层结构化 Prompt」与 Few-Shot（见 SceneStructuredPromptBuilder）
+  agent:
+    scene-prompt:
+      few-shot-enabled: true
+      max-few-shot-chars: 900
+  pipeline:
+    checkpoint:
+      enabled: true
+    retry:
+      max-attempts: 6
+      initial-delay-ms: 400
+      max-delay-ms: 5000
+      multiplier: 2.0
+      jitter-ratio: 0.15
+
+# 线程池配置
+thread:
+  pool:
+    executor:
+      config:
+        core-pool-size: 20
+        max-pool-size: 50
+        keep-alive-time: 5000
+        block-queue-size: 5000
+        policy: CallerRunsPolicy
+
+# 日志配置
+logging:
+  level:
+    cn.bugstack.novel: DEBUG
+    org.springframework.ai: INFO
+    org.mybatis: DEBUG
+    org.apache.ibatis: DEBUG
+    java.sql: DEBUG
+    java.sql.Statement: DEBUG
+    java.sql.PreparedStatement: DEBUG
+    root: INFO
